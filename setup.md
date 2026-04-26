@@ -34,7 +34,26 @@ hostnamectl set-hostname <MAIL_HOSTNAME>
 ### 1.3 Настроить ~/.bashrc
 
 ```bash
-cat >> ~/.bashrc << 'EOF'
+cat > ~/.bashrc << 'EOF'
+# ~/.bashrc: executed by bash(1) for non-login shells.
+
+# You may uncomment the following lines if you want `ls' to be colorized:
+# export LS_OPTIONS='--color=auto'
+# eval "$(dircolors)"
+# alias ls='ls $LS_OPTIONS'
+# alias ll='ls $LS_OPTIONS -l'
+# alias l='ls $LS_OPTIONS -lA'
+
+# So we dont have duplicates in history
+HISTCONTROL=ignoreboth:erasedups
+
+# Console visuals
+parse_git_branch() {
+  git branch 2>/dev/null | grep '*' | sed 's/* / (/;s/$/)/'
+}
+
+PS1='\[\e[1;31m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\[\e[1;33m\]$(parse_git_branch)\[\e[0m\]\$ '
+export PATH="$HOME/.local/bin:$PATH"
 
 # === Mail Server Admin ===
 alias mq='mailq'
@@ -50,11 +69,8 @@ alias ufw-status='ufw status verbose'
 
 HISTSIZE=10000
 HISTFILESIZE=20000
-HISTCONTROL=ignoredups:erasedups
 shopt -s histappend
 PROMPT_COMMAND="history -a; $PROMPT_COMMAND"
-
-PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
 EOF
 source ~/.bashrc
 ```
