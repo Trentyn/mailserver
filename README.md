@@ -1,19 +1,58 @@
-# mailserver
+# Mail Server Setup — Переменные и чеклист
 
-# VPS Mail Server Setup
+Заполни эту таблицу **до начала любых команд**. Все остальные файлы используют эти переменные.
 
-  Postfix + Dovecot + rspamd + Certbot на Debian 13.
+---
 
-  ## Использование
+## Вопросы перед началом
 
-  1. Заполни `mailserver-docs/config.md` своими значениями
-  2. Следуй `mailserver-docs/setup.md`
+### Сервер
+- Какой FQDN у почтового сервера? → `<MAIL_HOSTNAME>`
+  - Пример: `mx.example.com`
+  - Используется в Postfix `myhostname`, Dovecot TLS, Certbot, DNS PTR-записи
+- Какой публичный IP? → `<SERVER_IP>`
+  - Узнать: `hostname -I | awk '{print $1}'`
+- Какой базовый домен сервера? → `<BASE_DOMAIN>`
+  - Пример: `example.com` (домен, которому принадлежит `mx.example.com`)
 
-  ## Файлы
+### Домены для почты
+Для **каждого** домена, который будет принимать и отправлять почту:
+- Домен → `<MAIL_DOMAIN>`
+- DKIM селектор → `<DKIM_SELECTOR>` (рекомендация: `mail` + год, например `mail2025`)
+- Список ящиков → `<USER>@<MAIL_DOMAIN>` (сколько угодно, добавляются позже через `operations.md`)
 
-  | Файл | Содержимое |
-  |------|-----------|
-  | `mailserver-docs/config.md` | Твои домены, hostname, email — заполнить первым делом |
-  | `mailserver-docs/setup.md` | Полная установка с нуля |
-  | `mailserver-docs/operations.md` | Добавить домен/ящик, сменить пароль |
-  | `mailserver-docs/known-issues.md` | Грабли Debian 13 / Dovecot 2.4 |
+Несколько доменов — просто повторяй блок для каждого.
+
+### Сертификаты
+- Email для уведомлений Let's Encrypt → `<LETSENCRYPT_EMAIL>`
+
+### Опционально
+- Нужен fail2ban? (рекомендуется: да)
+- Нужен UFW? (рекомендуется: да)
+- Нужен POP3 помимо IMAP? (по умолчанию: включён)
+
+---
+
+## Таблица переменных — заполни здесь
+
+| Переменная         | Твоё значение | Пример              |
+|--------------------|---------------|---------------------|
+| `MAIL_HOSTNAME`    |               | `mx.example.com`    |
+| `SERVER_IP`        |               | `1.2.3.4`           |
+| `BASE_DOMAIN`      |               | `example.com`       |
+| `MAIL_DOMAIN`      |               | `company.com`       |
+| `DKIM_SELECTOR`    |               | `mail2025`          |
+| `LETSENCRYPT_EMAIL`|               | `admin@example.com` |
+
+Для каждого дополнительного домена добавь строки `MAIL_DOMAIN_2`, `DKIM_SELECTOR_2` и т.д.
+
+---
+
+## Структура файлов
+
+| Файл | Содержимое |
+|------|-----------|
+| `README.md` | Этот файл — переменные и вопросы |
+| `setup.md` | Полная установка с нуля (фазы 1–12) |
+| `operations.md` | Добавление доменов, ящиков, удаление, DKIM для нового домена |
+| `known-issues.md` | Известные проблемы Debian 13 / Dovecot 2.4 |
