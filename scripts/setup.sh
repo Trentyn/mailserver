@@ -94,6 +94,9 @@ FIRST_EMAIL="${FIRST_USER}@${MAIL_DOMAIN}"
 info "Будет создан ящик: ${BOLD}${FIRST_EMAIL}${NC}"
 FIRST_PASS=$(read_secret "Пароль для ${FIRST_EMAIL}")
 
+TRASH_RETENTION_DAYS=$(read_val "Сколько дней хранить Bin/Trash (0 — отключить автоочистку)" "30")
+[[ "$TRASH_RETENTION_DAYS" =~ ^[0-9]+$ ]] || die "Укажи количество дней: 0 или положительное целое число"
+
 echo
 echo -e "${BOLD}Параметры:${NC}"
 echo "  MAIL_HOSTNAME : $MAIL_HOSTNAME"
@@ -102,6 +105,7 @@ echo "  MAIL_DOMAIN   : $MAIL_DOMAIN"
 echo "  DKIM_SELECTOR : $DKIM_SELECTOR"
 echo "  SERVER_IP     : $SERVER_IP"
 echo "  FIRST_EMAIL   : $FIRST_EMAIL"
+echo "  TRASH_RETENTION_DAYS : $TRASH_RETENTION_DAYS"
 echo
 ask "Всё верно? Начать установку? [y/N]:"
 read -r confirm
@@ -707,6 +711,14 @@ fi
 systemctl stop "${UFW_ROLLBACK_UNIT}.timer"
 ok "UFW enabled; SSH port ${SSH_PORT} was verified by the owner"
 
+if (( TRASH_RETENTION_DAYS > 0 )); then
+    step "Автоочистка Bin/Trash"
+    bash "$SCRIPT_DIR/install-mail-cleanup-timer.sh" "$TRASH_RETENTION_DAYS"
+    ok "Bin/Trash будут очищаться через $TRASH_RETENTION_DAYS дней"
+else
+    info "Автоочистка Bin/Trash отключена"
+fi
+
 # ═════════════════════════════════════════════════════════════════════════════
 step "DNS записи — добавь в панели управления доменом"
 # ═════════════════════════════════════════════════════════════════════════════
@@ -760,6 +772,7 @@ Password: ${FIRST_PASS}
 IMAPS: ${MAIL_HOSTNAME}:993 (SSL/TLS)
 SMTP submission: ${MAIL_HOSTNAME}:587 (STARTTLS)
 SMTP SSL: ${MAIL_HOSTNAME}:465 (SSL/TLS)
+Bin/Trash retention: ${TRASH_RETENTION_DAYS} days (0 = disabled)
 
 DNS RECORDS — add in the DNS provider
 ${MAIL_HOSTNAME}.    A      ${SERVER_IP}

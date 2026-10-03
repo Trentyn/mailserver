@@ -19,7 +19,7 @@ Run only on a clean server:
 sudo bash scripts/setup.sh
 ```
 
-The installer asks for the mail hostname, mail domain, DKIM selector, Let's Encrypt notification email, SSH port, and first mailbox. It creates a root-only setup summary at `/root/mailserver-setup-<domain>-<timestamp>.txt`.
+The installer asks for the mail hostname, mail domain, DKIM selector, Let's Encrypt notification email, SSH port, first mailbox, and Trash retention period. Use `0` to disable automatic Trash cleanup. It creates a root-only setup summary at `/root/mailserver-setup-<domain>-<timestamp>.txt`.
 
 Do not run `setup.sh` again on an existing mail server. Use the maintenance scripts below.
 
@@ -107,7 +107,7 @@ Run a one-off cleanup after reviewing the preview:
 sudo bash scripts/cleanup-mailboxes.sh --apply --days 30
 ```
 
-Install the daily systemd timer:
+For an existing server, install or change the daily systemd timer:
 
 ```bash
 sudo bash scripts/install-mail-cleanup-timer.sh 30
