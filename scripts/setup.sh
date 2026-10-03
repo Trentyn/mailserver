@@ -47,7 +47,7 @@ read_secret() {
         [[ "$val" == "$confirm" ]] && break
         warn "Пароли не совпадают, попробуй снова" >&2
     done
-    echo "$val"
+    REPLY="$val"
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -92,7 +92,8 @@ FIRST_USER=$(read_val "Имя пользователя (до @)" "info")
 FIRST_USER="${FIRST_USER,,}"
 FIRST_EMAIL="${FIRST_USER}@${MAIL_DOMAIN}"
 info "Будет создан ящик: ${BOLD}${FIRST_EMAIL}${NC}"
-FIRST_PASS=$(read_secret "Пароль для ${FIRST_EMAIL}")
+read_secret "Пароль для ${FIRST_EMAIL}"
+FIRST_PASS="$REPLY"
 
 TRASH_RETENTION_DAYS=$(read_val "Сколько дней хранить Bin/Trash (0 — отключить автоочистку)" "30")
 [[ "$TRASH_RETENTION_DAYS" =~ ^[0-9]+$ ]] || die "Укажи количество дней: 0 или положительное целое число"
