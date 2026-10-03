@@ -75,7 +75,7 @@ Use the full email address as the login for incoming and outgoing mail.
 
 ## Storage and monitoring
 
-Mailboxes are Maildir directories under:
+Every mailbox has a Dovecot-enforced 5 GiB storage quota. Mailboxes are Maildir directories under:
 
 ```text
 /var/mail/vhosts/<domain>/<user>/

@@ -401,6 +401,15 @@ mail_path = /var/mail/vhosts/%{user|domain}/%{user|username}
 # Debian defaults to /var/mail/%{user}; virtual Maildir must use mail_path for INBOX.
 mail_inbox_path =
 
+# Per-mailbox storage limit. Dovecot count is the recommended 2.4 quota driver.
+mail_plugins {
+  quota = yes
+}
+quota "User quota" {
+  driver = count
+  storage_size = 5G
+}
+
 log_path = /var/log/dovecot.log
 
 # TLS (Dovecot 2.4)

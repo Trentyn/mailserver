@@ -29,7 +29,12 @@ doveconf -n >/dev/null && ok 'Dovecot configuration' || bad 'Dovecot configurati
 if doveconf -n | grep -Eq '^mail_inbox_path = /var/mail/'; then
   bad 'Dovecot INBOX path points to system mail instead of virtual Maildir'
 else
-  ok 'Dovecot virtual Maildir INBOX path'
+ok 'Dovecot virtual Maildir INBOX path'
+fi
+if doveconf -n | grep -Fq 'storage_size = 5G'; then
+  ok 'Dovecot mailbox quota: 5 GiB'
+else
+  bad 'Dovecot mailbox quota is not set to 5 GiB'
 fi
 rspamadm configtest >/dev/null && ok 'Rspamd configuration' || bad 'Rspamd configuration'
 
