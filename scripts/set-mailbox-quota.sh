@@ -16,7 +16,7 @@ if grep -q '^# BEGIN MAILSERVER QUOTA$' "$LOCAL_CONF"; then
   awk '/^# BEGIN MAILSERVER QUOTA$/{skip=1} !skip{print} /^# END MAILSERVER QUOTA$/{skip=0; next}' "$LOCAL_CONF" >"${LOCAL_CONF}.new"
   mv "${LOCAL_CONF}.new" "$LOCAL_CONF"
 elif doveconf -n | grep -Fq 'quota "User quota" {'; then
-  perl -0pi -e 's/(quota "User quota" \{.*?storage_size = )[0-9]+[KMGT]/$1$ENV{QUOTA}/s' "$LOCAL_CONF"
+  : # Existing quota is updated below.
 fi
 
 if ! doveconf -n | grep -Fq 'quota "User quota" {'; then
