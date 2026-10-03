@@ -95,6 +95,10 @@ info "Будет создан ящик: ${BOLD}${FIRST_EMAIL}${NC}"
 read_secret "Пароль для ${FIRST_EMAIL}"
 FIRST_PASS="$REPLY"
 
+MAILBOX_QUOTA=$(read_val "Квота каждого ящика (например 5G)" "5G")
+MAILBOX_QUOTA="${MAILBOX_QUOTA^^}"
+[[ "$MAILBOX_QUOTA" =~ ^[1-9][0-9]*[KMGT]$ ]] || die "Укажи положительный размер, например 5G, 10G или 500M"
+
 TRASH_RETENTION_DAYS=$(read_val "Сколько дней хранить Bin/Trash (0 — отключить автоочистку)" "30")
 [[ "$TRASH_RETENTION_DAYS" =~ ^[0-9]+$ ]] || die "Укажи количество дней: 0 или положительное целое число"
 
@@ -106,6 +110,7 @@ echo "  MAIL_DOMAIN   : $MAIL_DOMAIN"
 echo "  DKIM_SELECTOR : $DKIM_SELECTOR"
 echo "  SERVER_IP     : $SERVER_IP"
 echo "  FIRST_EMAIL   : $FIRST_EMAIL"
+echo "  MAILBOX_QUOTA : $MAILBOX_QUOTA"
 echo "  TRASH_RETENTION_DAYS : $TRASH_RETENTION_DAYS"
 echo
 ask "Всё верно? Начать установку? [y/N]:"
@@ -412,7 +417,7 @@ mail_plugins {
 }
 quota "User quota" {
   driver = count
-  storage_size = 5G
+  storage_size = $MAILBOX_QUOTA
 }
 
 log_path = /var/log/dovecot.log
@@ -794,6 +799,7 @@ Password: ${FIRST_PASS}
 IMAPS: ${MAIL_HOSTNAME}:993 (SSL/TLS)
 SMTP submission: ${MAIL_HOSTNAME}:587 (STARTTLS)
 SMTP SSL: ${MAIL_HOSTNAME}:465 (SSL/TLS)
+Mailbox quota: ${MAILBOX_QUOTA}
 Bin/Trash retention: ${TRASH_RETENTION_DAYS} days (0 = disabled)
 
 DNS RECORDS — add in the DNS provider
