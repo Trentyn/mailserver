@@ -296,6 +296,7 @@ local_transport = error:local mail delivery is disabled
 virtual_mailbox_domains = ${MAIL_DOMAIN}
 virtual_mailbox_base = /var/mail/vhosts
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
+smtpd_sender_login_maps = hash:/etc/postfix/sender_login_maps
 virtual_minimum_uid = 100
 virtual_uid_maps = static:5000
 virtual_gid_maps = static:5000
@@ -365,6 +366,8 @@ EOF
 # Первый ящик
 printf '%s\t%s/%s/\n' "$FIRST_EMAIL" "$MAIL_DOMAIN" "$FIRST_USER" > /etc/postfix/vmailbox
 postmap /etc/postfix/vmailbox
+printf '%s\t%s\n' "$FIRST_EMAIL" "$FIRST_EMAIL" > /etc/postfix/sender_login_maps
+postmap /etc/postfix/sender_login_maps
 
 # submission (587) и smtps (465) в master.cf
 # Комментируем существующие незакомментированные строки чтобы не было дублей
@@ -382,6 +385,7 @@ submission inet n       -       y       -       -       smtpd
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_tls_auth_only=yes
   -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_sender_restrictions=reject_authenticated_sender_login_mismatch,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
   -o milter_macro_daemon_name=ORIGINATING
 
@@ -391,6 +395,7 @@ smtps     inet  n       -       y       -       -       smtpd
   -o smtpd_hide_client_session=yes
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_sender_restrictions=reject_authenticated_sender_login_mismatch,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
   -o milter_macro_daemon_name=ORIGINATING
 EOF

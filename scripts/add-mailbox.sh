@@ -88,6 +88,8 @@ ok "Added to /etc/dovecot/users"
 # Postfix vmailbox
 echo "${EMAIL}    ${MAIL_DOMAIN}/${USERNAME}/" >> /etc/postfix/vmailbox
 postmap /etc/postfix/vmailbox
+echo "${EMAIL}    ${EMAIL}" >> /etc/postfix/sender_login_maps
+postmap /etc/postfix/sender_login_maps
 ok "Added to vmailbox"
 
 # Maildir directory
