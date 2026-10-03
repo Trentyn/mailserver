@@ -37,8 +37,8 @@ Do not run `setup.sh` again on an existing mail server. Use the maintenance scri
 | `verify-mailserver.sh` | Validate services, TLS and DNS |
 | `create-setup-summary.sh` | Recreate the root-only setup summary |
 | `set-mailbox-quota.sh` | Set the global storage quota for existing mailboxes |
-| `cleanup-mailboxes.sh` | Preview or remove old Junk and Trash messages |
-| `install-mail-cleanup-timer.sh` | Install daily automated Junk and Trash cleanup |
+| `cleanup-mailboxes.sh` | Preview or remove old Trash messages |
+| `install-mail-cleanup-timer.sh` | Install daily automated Trash cleanup |
 
 ## DNS records
 
@@ -91,9 +91,9 @@ df -h /var/mail
 sudo du -sh /var/mail/vhosts/<domain>/*
 ```
 
-## Junk and Trash retention
+## Trash retention
 
-The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They remove messages whose internal delivery date is older than the selected age from `Junk` and `Trash` only.
+The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They remove messages whose internal delivery date is older than the selected age from `Trash` only. Gmail may display this IMAP mailbox as `Bin`.
 
 Preview the result first:
 
@@ -114,7 +114,7 @@ sudo bash scripts/install-mail-cleanup-timer.sh 30
 systemctl list-timers mailserver-mail-cleanup.timer --all
 ```
 
-Use `90` instead of `30` if you want to retain Junk and Trash for ninety days. The timer has a randomized delay of up to twenty minutes and continues missed runs after a reboot.
+Use `90` instead of `30` if you want to retain Trash for ninety days. The timer has a randomized delay of up to twenty minutes and continues missed runs after a reboot.
 
 ## Stack and updates
 
