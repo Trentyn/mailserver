@@ -36,6 +36,9 @@ Do not run `setup.sh` again on an existing mail server. Use the maintenance scri
 | `status.sh` | Inspect services, mailboxes, queue and fail2ban |
 | `verify-mailserver.sh` | Validate services, TLS and DNS |
 | `create-setup-summary.sh` | Recreate the root-only setup summary |
+| `set-mailbox-quota.sh` | Set the global storage quota for existing mailboxes |
+| `cleanup-mailboxes.sh` | Preview or remove old Junk and Trash messages |
+| `install-mail-cleanup-timer.sh` | Install daily automated Junk and Trash cleanup |
 
 ## DNS records
 
@@ -87,6 +90,31 @@ Check free space and mailbox sizes:
 df -h /var/mail
 sudo du -sh /var/mail/vhosts/<domain>/*
 ```
+
+## Junk and Trash retention
+
+The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They remove messages whose internal delivery date is older than the selected age from `Junk` and `Trash` only.
+
+Preview the result first:
+
+```bash
+sudo bash scripts/cleanup-mailboxes.sh --days 30
+```
+
+Run a one-off cleanup after reviewing the preview:
+
+```bash
+sudo bash scripts/cleanup-mailboxes.sh --apply --days 30
+```
+
+Install the daily systemd timer:
+
+```bash
+sudo bash scripts/install-mail-cleanup-timer.sh 30
+systemctl list-timers mailserver-mail-cleanup.timer --all
+```
+
+Use `90` instead of `30` if you want to retain Junk and Trash for ninety days. The timer has a randomized delay of up to twenty minutes and continues missed runs after a reboot.
 
 ## Stack and updates
 
