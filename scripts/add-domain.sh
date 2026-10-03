@@ -81,6 +81,7 @@ PUB_FILE="/var/lib/rspamd/dkim/${NEW_DOMAIN}.${DKIM_SELECTOR}.pub"
 
 mkdir -p /var/lib/rspamd/dkim
 rspamadm dkim_keygen \
+    -b 2048 \
     -s "$DKIM_SELECTOR" \
     -d "$NEW_DOMAIN" \
     -k "$KEY_FILE" \

@@ -522,6 +522,7 @@ EOF
 
 mkdir -p /var/lib/rspamd/dkim
 rspamadm dkim_keygen \
+    -b 2048 \
     -s "$DKIM_SELECTOR" \
     -d "$MAIL_DOMAIN" \
     -k "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.key" \
