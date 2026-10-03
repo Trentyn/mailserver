@@ -677,10 +677,29 @@ fi
 
 # Аварийный откат отключит UFW через 3 минуты, если новый SSH-вход не проверен.
 UFW_ROLLBACK_UNIT="mailserver-ufw-rollback"
-systemd-run --quiet --unit="$UFW_ROLLBACK_UNIT" --on-active=3m /usr/sbin/ufw disable
+cat > "/run/systemd/system/${UFW_ROLLBACK_UNIT}.service" <<'EOF'
+[Unit]
+Description=Emergency rollback for mailserver UFW setup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ufw disable
+EOF
+cat > "/run/systemd/system/${UFW_ROLLBACK_UNIT}.timer" <<'EOF'
+[Unit]
+Description=Schedule emergency rollback for mailserver UFW setup
+
+[Timer]
+OnActiveSec=3m
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl start "${UFW_ROLLBACK_UNIT}.timer"
 systemctl is-active --quiet "${UFW_ROLLBACK_UNIT}.timer" \
     || die "Не удалось запланировать безопасный откат UFW"
-
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow "${SSH_PORT}/tcp" comment 'SSH verified port'
@@ -709,6 +728,8 @@ if [[ "$UFW_CONFIRM" != 'SSH-OK' ]]; then
     exit 1
 fi
 systemctl stop "${UFW_ROLLBACK_UNIT}.timer"
+rm -f "/run/systemd/system/${UFW_ROLLBACK_UNIT}.service" "/run/systemd/system/${UFW_ROLLBACK_UNIT}.timer"
+systemctl daemon-reload
 ok "UFW enabled; SSH port ${SSH_PORT} was verified by the owner"
 
 if (( TRASH_RETENTION_DAYS > 0 )); then
