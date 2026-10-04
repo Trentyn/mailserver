@@ -32,9 +32,25 @@ done
 
 cat > /etc/dovecot/mailserver-junk.conf <<'EOF'
 namespace inbox {
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
   mailbox Junk {
-    auto = create
+    auto = subscribe
     special_use = \Junk
+  }
+  mailbox Archive {
+    auto = subscribe
+    special_use = \Archive
   }
 }
 
@@ -138,9 +154,11 @@ systemctl is-active --quiet rspamd dovecot
 
 while IFS=: read -r email _; do
     [[ -n "$email" ]] || continue
-    if ! doveadm mailbox list -u "$email" | grep -Fxq Junk; then
-        doveadm mailbox create -u "$email" Junk
-    fi
+    for mailbox in Sent Drafts Trash Junk Archive; do
+        if ! doveadm mailbox list -u "$email" | grep -Fxq "$mailbox"; then
+            doveadm mailbox create -u "$email" "$mailbox"
+        fi
+    done
 done < /etc/dovecot/users
 
 install -m 0750 "$SCRIPT_DIR/cleanup-mailboxes.sh" /usr/local/sbin/mailserver-cleanup-mailboxes

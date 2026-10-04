@@ -76,6 +76,8 @@ Use the full email address as the login for incoming and outgoing mail.
 | SMTP | 465 | SSL/TLS |
 | SMTP | 587 | STARTTLS |
 
+The server exposes the standard IMAP system mailboxes `Sent`, `Drafts`, `Trash`, `Junk`, and `Archive` with their correct special-use attributes. `INBOX` is the protocol-reserved name and may be displayed in uppercase by clients.
+
 ## Storage and monitoring
 
 Every mailbox has a Dovecot-enforced 5 GiB storage quota. Mailboxes are Maildir directories under:

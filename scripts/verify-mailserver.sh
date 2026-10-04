@@ -38,23 +38,29 @@ else
 fi
 
 DOVECOT_CONFIG=$(doveconf -n)
-if grep -Fq 'special_use = "\\Junk"' <<<"$DOVECOT_CONFIG" \
+if grep -Fq 'special_use = "\\Sent"' <<<"$DOVECOT_CONFIG" \
+  && grep -Fq 'special_use = "\\Drafts"' <<<"$DOVECOT_CONFIG" \
+  && grep -Fq 'special_use = "\\Trash"' <<<"$DOVECOT_CONFIG" \
+  && grep -Fq 'special_use = "\\Junk"' <<<"$DOVECOT_CONFIG" \
+  && grep -Fq 'special_use = "\\Archive"' <<<"$DOVECOT_CONFIG" \
   && grep -Fq 'sieve_extprograms = yes' <<<"$DOVECOT_CONFIG" \
   && grep -Fq 'sieve_imapsieve = yes' <<<"$DOVECOT_CONFIG"; then
-  ok 'Dovecot Junk delivery and IMAPSieve training'
+  ok 'Dovecot system mailboxes, Junk delivery and IMAPSieve training'
 else
-  bad 'Dovecot Junk delivery or IMAPSieve training is missing'
+  bad 'Dovecot system mailbox, Junk delivery or IMAPSieve configuration is missing'
 fi
 
-missing_junk=0
+missing_system_mailboxes=0
 while IFS=: read -r mailbox _; do
   [[ -n "$mailbox" ]] || continue
-  if ! doveadm mailbox list -u "$mailbox" | grep -Fxq Junk; then
-    bad "Junk mailbox is missing for ${mailbox}"
-    missing_junk=1
-  fi
+  for system_mailbox in Sent Drafts Trash Junk Archive; do
+    if ! doveadm mailbox list -u "$mailbox" | grep -Fxq "$system_mailbox"; then
+      bad "${system_mailbox} mailbox is missing for ${mailbox}"
+      missing_system_mailboxes=1
+    fi
+  done
 done < /etc/dovecot/users
-(( missing_junk == 0 )) && ok 'Junk mailbox exists for every user'
+(( missing_system_mailboxes == 0 )) && ok 'System mailboxes exist for every user'
 
 if [[ -f /etc/rspamd/local.d/redis.conf ]] \
   && grep -Fq '127.0.0.1:6379' /etc/rspamd/local.d/redis.conf \

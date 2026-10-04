@@ -98,8 +98,10 @@ chown -R vmail:vmail "/var/mail/vhosts/${MAIL_DOMAIN}/${USERNAME}"
 chmod -R 700 "/var/mail/vhosts/${MAIL_DOMAIN}/${USERNAME}"
 ok "Maildir created"
 
-doveadm mailbox create -u "$EMAIL" Junk
-ok "Junk mailbox created"
+for mailbox in Sent Drafts Trash Junk Archive; do
+    doveadm mailbox create -u "$EMAIL" "$mailbox"
+done
+ok "System mailboxes created: Sent, Drafts, Trash, Junk, Archive"
 # ── Reload services ─────────────────────────────────────────────────────────────
 systemctl reload postfix dovecot
 

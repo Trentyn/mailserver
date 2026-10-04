@@ -422,9 +422,25 @@ namespace inbox {
   inbox = yes
   separator = /
 
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
   mailbox Junk {
-    auto = create
+    auto = subscribe
     special_use = \Junk
+  }
+  mailbox Archive {
+    auto = subscribe
+    special_use = \Archive
   }
 }
 # Per-mailbox storage limit. Dovecot count is the recommended 2.4 quota driver.
