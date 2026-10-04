@@ -28,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # curl, dig, gpg могут отсутствовать на чистом Debian — ставим сразу
 step "Подготовка"
 apt-get update -q
-apt-get install -y -q curl dnsutils gnupg2 lsb-release
+apt-get install -y -q curl dnsutils gnupg2 lsb-release ssl-cert
 ok "Базовые утилиты готовы"
 
 read_val() {
