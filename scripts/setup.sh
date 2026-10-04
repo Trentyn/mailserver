@@ -99,8 +99,8 @@ MAILBOX_QUOTA=$(read_val "Квота каждого ящика (например
 MAILBOX_QUOTA="${MAILBOX_QUOTA^^}"
 [[ "$MAILBOX_QUOTA" =~ ^[1-9][0-9]*[KMGT]$ ]] || die "Укажи положительный размер, например 5G, 10G или 500M"
 
-TRASH_RETENTION_DAYS=$(read_val "Сколько дней хранить Bin/Trash (0 — отключить автоочистку)" "30")
-[[ "$TRASH_RETENTION_DAYS" =~ ^[0-9]+$ ]] || die "Укажи количество дней: 0 или положительное целое число"
+MAIL_RETENTION_DAYS=$(read_val "Сколько дней хранить Bin/Trash и Junk (0 — отключить автоочистку)" "30")
+[[ "$MAIL_RETENTION_DAYS" =~ ^[0-9]+$ ]] || die "Укажи количество дней: 0 или положительное целое число"
 
 echo
 echo -e "${BOLD}Параметры:${NC}"
@@ -111,7 +111,7 @@ echo "  DKIM_SELECTOR : $DKIM_SELECTOR"
 echo "  SERVER_IP     : $SERVER_IP"
 echo "  FIRST_EMAIL   : $FIRST_EMAIL"
 echo "  MAILBOX_QUOTA : $MAILBOX_QUOTA"
-echo "  TRASH_RETENTION_DAYS : $TRASH_RETENTION_DAYS"
+echo "  MAIL_RETENTION_DAYS : $MAIL_RETENTION_DAYS"
 echo
 ask "Всё верно? Начать установку? [y/N]:"
 read -r confirm
@@ -178,7 +178,7 @@ apt-get update -q
 apt-get upgrade -y -q
 apt-get install -y -q \
     postfix postfix-pcre \
-    dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd \
+    dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-sieve \
     rspamd \
     redis-server \
     certbot \
@@ -418,6 +418,15 @@ mail_path = /var/mail/vhosts/%{user|domain}/%{user|username}
 # Debian defaults to /var/mail/%{user}; virtual Maildir must use mail_path for INBOX.
 mail_inbox_path =
 
+namespace inbox {
+  inbox = yes
+  separator = /
+
+  mailbox Junk {
+    auto = create
+    special_use = \Junk
+  }
+}
 # Per-mailbox storage limit. Dovecot count is the recommended 2.4 quota driver.
 mail_plugins {
   quota = yes
@@ -459,6 +468,45 @@ protocol pop3 {
 }
 protocol lmtp {
   postmaster_address = postmaster@${MAIL_DOMAIN}
+  mail_plugins {
+    sieve = yes
+  }
+}
+
+protocol imap {
+  mail_plugins {
+    imap_sieve = yes
+  }
+}
+
+# Global rules: Rspamd marks inbound spam and Sieve files it into Junk.
+sieve_plugins {
+  sieve_extprograms = yes
+  sieve_imapsieve = yes
+}
+sieve_global_extensions {
+  vnd.dovecot.pipe = yes
+}
+sieve_pipe_bin_dir = /usr/lib/dovecot/sieve
+sieve_script spam_to_junk {
+  type = before
+  path = /etc/dovecot/sieve/spam-to-junk.sieve
+}
+
+# IMAPSieve teaches Rspamd when a user moves mail into or out of Junk.
+mailbox Junk {
+  sieve_script learn_spam {
+    type = before
+    cause = copy
+    path = /etc/dovecot/sieve/learn-spam.sieve
+  }
+}
+imapsieve_from Junk {
+  sieve_script learn_ham {
+    type = before
+    cause = copy
+    path = /etc/dovecot/sieve/learn-ham.sieve
+  }
 }
 
 
@@ -522,6 +570,19 @@ step "Настройка rspamd"
 
 mkdir -p /etc/rspamd/local.d
 
+cat > /etc/rspamd/local.d/milter_headers.conf << 'EOF'
+# Mark only messages Rspamd classifies as spam. Dovecot's global Sieve rule
+# consumes this marker and files the message into Junk.
+use = ["spam-header"];
+routines {
+  spam-header {
+    header = "X-Rspamd-Deliver-To";
+    value = "Junk";
+    remove = 0;
+  }
+}
+EOF
+
 cat > /etc/rspamd/local.d/worker-proxy.inc << 'EOF'
 milter = yes;
 timeout = 120s;
@@ -561,6 +622,42 @@ chmod 440 "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.key"
 echo "${MAIL_DOMAIN}    ${DKIM_SELECTOR}" > /etc/rspamd/dkim_selectors.map
 
 rspamadm configtest && ok "rspamd настроен"
+
+install -d -o root -g vmail -m 0750 /etc/dovecot/sieve /usr/lib/dovecot/sieve
+cat > /etc/dovecot/sieve/spam-to-junk.sieve <<'EOF'
+require ["fileinto", "mailbox"];
+
+if header :is "X-Rspamd-Deliver-To" "Junk" {
+    fileinto :create "Junk";
+    stop;
+}
+EOF
+cat > /etc/dovecot/sieve/learn-spam.sieve <<'EOF'
+require ["vnd.dovecot.pipe", "copy"];
+pipe :copy "rspamd-learn-spam";
+EOF
+cat > /etc/dovecot/sieve/learn-ham.sieve <<'EOF'
+require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment"];
+
+# Deleting spam is not a ham report.
+if environment :is "imap.mailbox" "Trash" {
+    stop;
+}
+pipe :copy "rspamd-learn-ham";
+EOF
+cat > /usr/lib/dovecot/sieve/rspamd-learn-spam <<'EOF'
+#!/bin/sh
+exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_spam
+EOF
+cat > /usr/lib/dovecot/sieve/rspamd-learn-ham <<'EOF'
+#!/bin/sh
+exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_ham
+EOF
+chmod 0640 /etc/dovecot/sieve/*.sieve
+chmod 0750 /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
+sievec /etc/dovecot/sieve/spam-to-junk.sieve
+sievec /etc/dovecot/sieve/learn-spam.sieve
+sievec /etc/dovecot/sieve/learn-ham.sieve
 
 # ═════════════════════════════════════════════════════════════════════════════
 step "TLS сертификат"
@@ -745,10 +842,10 @@ rm -f "/run/systemd/system/${UFW_ROLLBACK_UNIT}.service" "/run/systemd/system/${
 systemctl daemon-reload
 ok "UFW enabled; SSH port ${SSH_PORT} was verified by the owner"
 
-if (( TRASH_RETENTION_DAYS > 0 )); then
-    step "Автоочистка Bin/Trash"
-    bash "$SCRIPT_DIR/install-mail-cleanup-timer.sh" "$TRASH_RETENTION_DAYS"
-    ok "Bin/Trash будут очищаться через $TRASH_RETENTION_DAYS дней"
+if (( MAIL_RETENTION_DAYS > 0 )); then
+    step "Автоочистка Bin/Trash и Junk"
+    bash "$SCRIPT_DIR/install-mail-cleanup-timer.sh" "$MAIL_RETENTION_DAYS"
+    ok "Bin/Trash и Junk будут очищаться через $MAIL_RETENTION_DAYS дней"
 else
     info "Автоочистка Bin/Trash отключена"
 fi
@@ -807,7 +904,7 @@ IMAPS: ${MAIL_HOSTNAME}:993 (SSL/TLS)
 SMTP submission: ${MAIL_HOSTNAME}:587 (STARTTLS)
 SMTP SSL: ${MAIL_HOSTNAME}:465 (SSL/TLS)
 Mailbox quota: ${MAILBOX_QUOTA}
-Bin/Trash retention: ${TRASH_RETENTION_DAYS} days (0 = disabled)
+Trash and Junk retention: ${MAIL_RETENTION_DAYS} days (0 = disabled)
 
 DNS RECORDS — add in the DNS provider
 ${MAIL_HOSTNAME}.    A      ${SERVER_IP}

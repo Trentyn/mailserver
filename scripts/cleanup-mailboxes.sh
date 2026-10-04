@@ -1,5 +1,5 @@
 #!/bin/bash
-# Preview or remove old messages from Trash for every virtual mailbox.
+# Preview or remove old messages from Trash and Junk for every virtual mailbox.
 set -Eeuo pipefail
 
 APPLY=false
@@ -18,10 +18,10 @@ done
 [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || { echo 'Days must be a positive integer.' >&2; exit 2; }
 [[ -s /etc/dovecot/users ]] || { echo 'No virtual mailboxes found in /etc/dovecot/users.' >&2; exit 1; }
 
-$APPLY || echo "Preview only. Re-run with --apply to delete messages older than ${DAYS} days."
+$APPLY || echo "Preview only. Re-run with --apply to delete Trash and Junk messages older than ${DAYS} days."
 while IFS=: read -r email _; do
   [[ -n "$email" ]] || continue
-  for folder in Trash; do
+  for folder in Trash Junk; do
     matches=$(doveadm search -u "$email" mailbox "$folder" before "${DAYS}d" 2>/dev/null || true)
     count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l)
     (( count > 0 )) || continue

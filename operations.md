@@ -39,3 +39,6 @@ sudo bash scripts/verify-mailserver.sh <mail-hostname> <mail-domain> <dkim-selec
 ```
 
 The verifier is read-only and checks services, configuration, public DNS, PTR and TLS.
+## Spam and Junk
+
+Inbound messages that Rspamd classifies as spam are filed into the IMAP Junk mailbox. Move a false positive from Junk to Inbox to train it as ham; move actual spam into Junk to train it as spam. Do not move a message to Trash merely to train it: Trash is deliberately ignored by the ham-training rule.

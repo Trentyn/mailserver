@@ -19,7 +19,7 @@ Run only on a clean server:
 sudo bash scripts/setup.sh
 ```
 
-The installer asks for the mail hostname, mail domain, DKIM selector, Let's Encrypt notification email, SSH port, first mailbox, and Trash retention period. Use `0` to disable automatic Trash cleanup. It creates a root-only setup summary at `/root/mailserver-setup-<domain>-<timestamp>.txt`.
+The installer asks for the mail hostname, mail domain, DKIM selector, Let's Encrypt notification email, SSH port, first mailbox, and one Trash and Junk retention period. Use `0` to disable automatic cleanup for either folder. It creates a root-only setup summary at `/root/mailserver-setup-<domain>-<timestamp>.txt`.
 
 Do not run `setup.sh` again on an existing mail server. Use the maintenance scripts below.
 
@@ -37,8 +37,8 @@ Do not run `setup.sh` again on an existing mail server. Use the maintenance scri
 | `verify-mailserver.sh` | Validate services, TLS and DNS |
 | `create-setup-summary.sh` | Recreate the root-only setup summary |
 | `set-mailbox-quota.sh` | Set the global storage quota for existing mailboxes |
-| `cleanup-mailboxes.sh` | Preview or remove old Trash messages |
-| `install-mail-cleanup-timer.sh` | Install daily automated Trash cleanup |
+| `cleanup-mailboxes.sh` | Preview or remove old Trash and Junk messages |
+| `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |
 
 ## DNS records
 
@@ -91,9 +91,9 @@ df -h /var/mail
 sudo du -sh /var/mail/vhosts/<domain>/*
 ```
 
-## Trash retention
+## Trash and Junk retention
 
-The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They remove messages whose internal delivery date is older than the selected age from `Trash` only. Gmail may display this IMAP mailbox as `Bin`.
+The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They remove messages whose internal delivery date is older than the selected age from `Trash` and `Junk`. Gmail may display `Trash` as `Bin`.
 
 Preview the result first:
 
@@ -114,8 +114,13 @@ sudo bash scripts/install-mail-cleanup-timer.sh 30
 systemctl list-timers mailserver-mail-cleanup.timer --all
 ```
 
-Use `90` instead of `30` if you want to retain Trash for ninety days. The timer has a randomized delay of up to twenty minutes and continues missed runs after a reboot.
+Trash and Junk always share the same retention period. The timer has a randomized delay of up to twenty minutes and continues missed runs after a reboot.
 
+## Junk handling
+
+Rspamd marks inbound spam and Dovecot files it into the standard IMAP `Junk` mailbox. Moving a message into `Junk` teaches Rspamd it is spam; moving it from `Junk` to another mailbox teaches Rspamd it is legitimate mail. Moving mail from `Junk` to `Trash` is deliberately not a ham report.
+
+The cleanup scripts never touch Inbox, Sent, or Drafts. They can remove old messages from `Trash` and `Junk` independently. Gmail may display `Trash` as `Bin` and may not expose `Junk` for external IMAP accounts; Roundcube and standard IMAP clients do. Trash and Junk always share one retention period; use `0` during setup to disable automatic cleanup.
 ## Stack and updates
 
 The installer runs `apt update` and `apt upgrade`, uses the official Dovecot CE 2.4 and rspamd repositories, and uses Debian packages for Postfix, Certbot, Redis and fail2ban. After major package updates, run `postfix check`, `doveconf -n`, `rspamadm configtest`, and the verification script.
