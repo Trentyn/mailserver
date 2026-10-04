@@ -26,7 +26,7 @@ apt-get install -y dovecot-sieve
 STAMP=$(date +%Y%m%d%H%M%S)
 BACKUP_DIR="/root/mailserver-junk-backup-${STAMP}"
 mkdir -p "$BACKUP_DIR"
-for path in /etc/dovecot/dovecot.conf /etc/dovecot/mailserver-junk.conf /etc/rspamd/local.d/milter_headers.conf /etc/rspamd/local.d/redis.conf; do
+for path in /etc/dovecot/dovecot.conf /etc/dovecot/mailserver-junk.conf /etc/rspamd/local.d/milter_headers.conf /etc/rspamd/local.d/redis.conf /etc/rspamd/local.d/options.inc; do
     [[ -e "$path" ]] && cp -a "$path" "$BACKUP_DIR/$(basename "$path")"
 done
 
@@ -116,6 +116,9 @@ chmod 0750 /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspam
 mkdir -p /etc/rspamd/local.d
 cat > /etc/rspamd/local.d/redis.conf <<'EOF'
 servers = "127.0.0.1:6379";
+EOF
+cat > /etc/rspamd/local.d/options.inc <<'EOF'
+task_timeout = 10s;
 EOF
 cat > /etc/rspamd/local.d/milter_headers.conf <<'EOF'
 use = ["spam-header"];

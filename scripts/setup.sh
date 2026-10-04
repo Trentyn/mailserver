@@ -574,6 +574,9 @@ mkdir -p /etc/rspamd/local.d
 cat > /etc/rspamd/local.d/redis.conf << 'EOF'
 servers = "127.0.0.1:6379";
 EOF
+cat > /etc/rspamd/local.d/options.inc <<'EOF'
+task_timeout = 10s;
+EOF
 
 cat > /etc/rspamd/local.d/milter_headers.conf << 'EOF'
 # Mark only messages Rspamd classifies as spam. Dovecot's global Sieve rule
