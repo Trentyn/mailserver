@@ -135,7 +135,9 @@ systemctl is-active --quiet rspamd dovecot
 
 while IFS=: read -r email _; do
     [[ -n "$email" ]] || continue
-    doveadm mailbox create -u "$email" Junk
+    if ! doveadm mailbox list -u "$email" | grep -Fxq Junk; then
+        doveadm mailbox create -u "$email" Junk
+    fi
 done < /etc/dovecot/users
 
 install -m 0750 "$SCRIPT_DIR/cleanup-mailboxes.sh" /usr/local/sbin/mailserver-cleanup-mailboxes
