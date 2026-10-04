@@ -570,6 +570,11 @@ step "Настройка rspamd"
 
 mkdir -p /etc/rspamd/local.d
 
+# Redis backs Rspamd's Bayes statistics and IMAPSieve user training.
+cat > /etc/rspamd/local.d/redis.conf << 'EOF'
+servers = "127.0.0.1:6379";
+EOF
+
 cat > /etc/rspamd/local.d/milter_headers.conf << 'EOF'
 # Mark only messages Rspamd classifies as spam. Dovecot's global Sieve rule
 # consumes this marker and files the message into Junk.
