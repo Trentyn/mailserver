@@ -575,11 +575,6 @@ cat > /etc/rspamd/local.d/redis.conf << 'EOF'
 servers = "127.0.0.1:6379";
 EOF
 
-# Allow the normal worker to finish every enabled DNS-backed check.
-cat > /etc/rspamd/local.d/worker-normal.inc <<'EOF'
-task_timeout = 10s;
-EOF
-
 cat > /etc/rspamd/local.d/milter_headers.conf << 'EOF'
 # Mark only messages Rspamd classifies as spam. Dovecot's global Sieve rule
 # consumes this marker and files the message into Junk.
