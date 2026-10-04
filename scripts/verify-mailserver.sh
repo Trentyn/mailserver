@@ -36,7 +36,40 @@ if doveconf -n | grep -Fq 'storage_size = 5G'; then
 else
   bad 'Dovecot mailbox quota is not set to 5 GiB'
 fi
+
+DOVECOT_CONFIG=$(doveconf -n)
+if grep -Fq 'special_use = "\\Junk"' <<<"$DOVECOT_CONFIG" \
+  && grep -Fq 'sieve_extprograms = yes' <<<"$DOVECOT_CONFIG" \
+  && grep -Fq 'sieve_imapsieve = yes' <<<"$DOVECOT_CONFIG"; then
+  ok 'Dovecot Junk delivery and IMAPSieve training'
+else
+  bad 'Dovecot Junk delivery or IMAPSieve training is missing'
+fi
+
+missing_junk=0
+while IFS=: read -r mailbox _; do
+  [[ -n "$mailbox" ]] || continue
+  if ! doveadm mailbox list -u "$mailbox" | grep -Fxq Junk; then
+    bad "Junk mailbox is missing for ${mailbox}"
+    missing_junk=1
+  fi
+done < /etc/dovecot/users
+(( missing_junk == 0 )) && ok 'Junk mailbox exists for every user'
+
+if [[ -f /etc/rspamd/local.d/redis.conf ]] \
+  && grep -Fq '127.0.0.1:6379' /etc/rspamd/local.d/redis.conf \
+  && redis-cli -h 127.0.0.1 ping 2>/dev/null | grep -Fxq PONG; then
+  ok 'Rspamd Redis Bayes backend'
+else
+  bad 'Rspamd Redis Bayes backend'
+fi
+
 rspamadm configtest >/dev/null && ok 'Rspamd configuration' || bad 'Rspamd configuration'
+if systemctl is-active --quiet mailserver-mail-cleanup.timer; then
+  ok 'Trash and Junk cleanup timer'
+else
+  bad 'Trash and Junk cleanup timer is not active'
+fi
 
 A=$(dig +short A "$MAIL_HOSTNAME" @1.1.1.1 | tail -1)
 [[ "$A" == "$SERVER_IP" ]] && ok "A ${MAIL_HOSTNAME} -> ${SERVER_IP}" || bad "A ${MAIL_HOSTNAME} is '${A:-missing}', expected ${SERVER_IP}"
