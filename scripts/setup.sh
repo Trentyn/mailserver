@@ -653,11 +653,12 @@ cat > /usr/lib/dovecot/sieve/rspamd-learn-ham <<'EOF'
 #!/bin/sh
 exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_ham
 EOF
-chmod 0640 /etc/dovecot/sieve/*.sieve
-chmod 0750 /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
 sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/spam-to-junk.sieve
 sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/learn-spam.sieve
 sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/learn-ham.sieve
+chown root:vmail /etc/dovecot/sieve/* /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
+chmod 0640 /etc/dovecot/sieve/*.sieve /etc/dovecot/sieve/*.svbin
+chmod 0750 /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
 
 # ═════════════════════════════════════════════════════════════════════════════
 step "TLS сертификат"
