@@ -15,7 +15,7 @@ Postfix provides SMTP, Dovecot CE 2.4 provides IMAP, POP3 and LMTP, rspamd provi
 
 Run only on a clean server:
 
-```bash
+````bash
 sudo bash scripts/setup.sh
 ```
 
@@ -38,7 +38,7 @@ Do not run `setup.sh` again on an existing mail server. Use the maintenance scri
 | `create-setup-summary.sh` | Recreate the root-only setup summary |
 | `set-mailbox-quota.sh` | Set the global storage quota for existing mailboxes |
 | `cleanup-mailboxes.sh` | Preview or remove old Trash and Junk messages |
-| `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |
+| `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |`n| `enable-junk-filtering.sh` | Add Junk delivery and Bayes training to an existing installation |
 
 ## DNS records
 
@@ -59,7 +59,7 @@ Do not paste DNS zone syntax such as `IN TXT`, parentheses, or outer quotation m
 
 After DNS has propagated, run:
 
-```bash
+````bash
 sudo bash scripts/verify-mailserver.sh mx.example.com example.com mail2026
 ```
 
@@ -86,7 +86,7 @@ Every mailbox has a Dovecot-enforced 5 GiB storage quota. Mailboxes are Maildir 
 
 Check free space and mailbox sizes:
 
-```bash
+````bash
 df -h /var/mail
 sudo du -sh /var/mail/vhosts/<domain>/*
 ```
@@ -97,19 +97,19 @@ The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They 
 
 Preview the result first:
 
-```bash
+````bash
 sudo bash scripts/cleanup-mailboxes.sh --days 30
 ```
 
 Run a one-off cleanup after reviewing the preview:
 
-```bash
+````bash
 sudo bash scripts/cleanup-mailboxes.sh --apply --days 30
 ```
 
 For an existing server, install or change the daily systemd timer:
 
-```bash
+````bash
 sudo bash scripts/install-mail-cleanup-timer.sh 30
 systemctl list-timers mailserver-mail-cleanup.timer --all
 ```
@@ -120,7 +120,7 @@ Trash and Junk always share the same retention period. The timer has a randomize
 
 Rspamd marks inbound spam and Dovecot files it into the standard IMAP `Junk` mailbox. Moving a message into `Junk` teaches Rspamd it is spam; moving it from `Junk` to another mailbox teaches Rspamd it is legitimate mail. Moving mail from `Junk` to `Trash` is deliberately not a ham report.
 
-The cleanup scripts never touch Inbox, Sent, or Drafts. They can remove old messages from `Trash` and `Junk` independently. Gmail may display `Trash` as `Bin` and may not expose `Junk` for external IMAP accounts; Roundcube and standard IMAP clients do. Trash and Junk always share one retention period; use `0` during setup to disable automatic cleanup.
+The cleanup scripts never touch Inbox, Sent, or Drafts. They remove old messages from `Trash` and `Junk` using the same retention period. Gmail may display `Trash` as `Bin` and may not expose `Junk` for external IMAP accounts; Roundcube and standard IMAP clients do. Trash and Junk always share one retention period; use `0` during setup to disable automatic cleanup.
 ## Stack and updates
 
 The installer runs `apt update` and `apt upgrade`, uses the official Dovecot CE 2.4 and rspamd repositories, and uses Debian packages for Postfix, Certbot, Redis and fail2ban. After major package updates, run `postfix check`, `doveconf -n`, `rspamadm configtest`, and the verification script.
@@ -128,3 +128,13 @@ The installer runs `apt update` and `apt upgrade`, uses the official Dovecot CE 
 ## Firewall
 
 On a clean server, setup configures UFW with an automatic three-minute rollback. Before confirming `SSH-OK`, open a separate terminal and verify that SSH access works. If UFW is already active, setup stops without changing its rules.
+
+## Add Junk handling to an existing server
+
+After pulling the current repository, install the tested Junk delivery, Bayes training, and shared cleanup timer without rerunning full setup:
+
+```bash
+sudo bash scripts/enable-junk-filtering.sh 30
+``
+
+The command makes a root-only configuration backup before changing services.
