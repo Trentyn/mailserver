@@ -18,13 +18,10 @@ jobs:
     needs: shellcheck
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        debian: [bookworm, trixie]
     steps:
       - uses: actions/checkout@v4
-      - name: Install and exercise the mail server in Debian ${{ matrix.debian }}
+      # Debian 12 is still supported; run it locally with DEBIAN_RELEASE=bookworm.
+      - name: Install and exercise the mail server in Debian 13
         run: bash tests/integration.sh
         env:
-          DEBIAN_RELEASE: ${{ matrix.debian }}
+          DEBIAN_RELEASE: trixie

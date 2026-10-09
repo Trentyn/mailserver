@@ -92,4 +92,4 @@ bash tests/integration.sh                           # Debian 13
 DEBIAN_RELEASE=bookworm bash tests/integration.sh   # Debian 12
 ```
 
-It needs Docker and internet access. CI runs ShellCheck and this test on Debian 12 and 13 for every push. Shared shell helpers are in `scripts/lib/`.
+It needs Docker and internet access. CI runs ShellCheck and this test on Debian 13 for every push; run the Debian 12 test locally. Shared shell helpers are in `scripts/lib/`.
