@@ -14,6 +14,18 @@ ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
 
 [[ $EUID -eq 0 ]] || die "Run as root"
 
+# Exact-match helpers: addresses contain regex metacharacters ('.', '+'), so
+# grep/sed patterns could match or delete a different mailbox or domain.
+has_user() { awk -F: -v k="$1" '$1 == k {f=1} END {exit !f}' /etc/dovecot/users; }
+# Rewrite in place with cat so the file keeps its owner and mode.
+filter_file() {
+    local file="$1"; shift
+    [[ -f "$file" ]] || return 0
+    awk "$@" "$file" > "${file}.tmp"
+    cat "${file}.tmp" > "$file"
+    rm -f "${file}.tmp"
+}
+
 [[ -f /etc/dovecot/users ]] || die "/etc/dovecot/users was not found. Is the server configured?"
 
 step "Delete mailbox"
@@ -30,7 +42,7 @@ ask "Email address to delete:"
 read -r EMAIL
 EMAIL="${EMAIL,,}"
 
-grep -q "^${EMAIL}:" /etc/dovecot/users || die "Mailbox '${EMAIL}' was not found"
+has_user "$EMAIL" || die "Mailbox '${EMAIL}' was not found"
 
 # Determine data path
 DOMAIN="${EMAIL#*@}"
@@ -50,7 +62,8 @@ echo "  Data: ${MAIL_DIR} (${MAIL_SIZE})"
 echo
 echo "The following will be deleted:"
 echo "  • entry from /etc/dovecot/users"
-echo "  • entry from /etc/postfix/vmailbox"
+echo "  • entries from /etc/postfix/vmailbox and sender_login_maps"
+echo "  • aliases in /etc/postfix/virtual that deliver to this mailbox"
 echo "  • all mail in ${MAIL_DIR}"
 echo
 ask "Enter the email again to confirm:"
@@ -64,14 +77,25 @@ fi
 step "Deleting"
 
 # Dovecot users
-sed -i "/^${EMAIL}:/d" /etc/dovecot/users
+filter_file /etc/dovecot/users -F: -v k="$EMAIL" '$1 != k'
 ok "Removed from /etc/dovecot/users"
 
-# Postfix vmailbox
-if grep -q "^${EMAIL}" /etc/postfix/vmailbox 2>/dev/null; then
-    sed -i "/^${EMAIL}/d" /etc/postfix/vmailbox
-    postmap /etc/postfix/vmailbox
-    ok "Removed from vmailbox"
+# Postfix maps
+for map in /etc/postfix/vmailbox /etc/postfix/sender_login_maps; do
+    [[ -f "$map" ]] || continue
+    filter_file "$map" -v k="$EMAIL" '$1 != k'
+    postmap "$map"
+done
+ok "Removed from vmailbox and sender_login_maps"
+
+if [[ -f /etc/postfix/virtual ]]; then
+    ORPHANED=$(awk -v e="$EMAIL" '$2 == e {print $1}' /etc/postfix/virtual)
+    if [[ -n "$ORPHANED" ]]; then
+        filter_file /etc/postfix/virtual -v e="$EMAIL" '$1 != e && $2 != e'
+        postmap /etc/postfix/virtual
+        warn "Removed aliases that delivered to ${EMAIL}: $(echo "$ORPHANED" | paste -sd' ')"
+        warn "Point them to another mailbox in /etc/postfix/virtual, then run: postmap /etc/postfix/virtual"
+    fi
 fi
 
 # Maildir

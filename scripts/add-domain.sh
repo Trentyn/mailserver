@@ -28,22 +28,36 @@ step "New domain settings"
 
 ask "New domain (example.com):"
 read -r NEW_DOMAIN
-[[ "$NEW_DOMAIN" == *.* ]] || die "Invalid domain"
 NEW_DOMAIN="${NEW_DOMAIN,,}"
+[[ "$NEW_DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] || die "Invalid domain: ${NEW_DOMAIN}"
 
 CURRENT_DOMAINS=$(postconf -h virtual_mailbox_domains 2>/dev/null || echo "")
-if echo "$CURRENT_DOMAINS" | tr ',' '\n' | xargs | tr ' ' '\n' | grep -qx "$NEW_DOMAIN"; then
+if echo "$CURRENT_DOMAINS" | tr ',' '\n' | xargs | tr ' ' '\n' | grep -Fxq "$NEW_DOMAIN"; then
     die "Domain ${NEW_DOMAIN} already exists"
 fi
 
 ask "DKIM selector [mail$(date +%Y)]:"
 read -r DKIM_SELECTOR
 DKIM_SELECTOR="${DKIM_SELECTOR:-mail$(date +%Y)}"
+DKIM_SELECTOR="${DKIM_SELECTOR,,}"
+[[ "$DKIM_SELECTOR" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "Invalid DKIM selector: use letters, digits and hyphens"
+
+# postmaster@ is required by RFC 5321 and receives DMARC reports, so it must
+# deliver to an existing mailbox. Default to the primary domain's postmaster.
+DEFAULT_POSTMASTER=$(awk '$1 ~ /^postmaster@/ {print $2; exit}' /etc/postfix/virtual 2>/dev/null || true)
+[[ -n "$DEFAULT_POSTMASTER" ]] || DEFAULT_POSTMASTER=$(head -1 /etc/dovecot/users 2>/dev/null | cut -d: -f1)
+ask "Mailbox for postmaster@${NEW_DOMAIN} and abuse@${NEW_DOMAIN} [${DEFAULT_POSTMASTER}]:"
+read -r POSTMASTER_TARGET
+POSTMASTER_TARGET="${POSTMASTER_TARGET:-$DEFAULT_POSTMASTER}"
+POSTMASTER_TARGET="${POSTMASTER_TARGET,,}"
+awk -F: -v k="$POSTMASTER_TARGET" '$1 == k {f=1} END {exit !f}' /etc/dovecot/users 2>/dev/null \
+    || die "Mailbox '${POSTMASTER_TARGET}' does not exist. Create it with add-mailbox.sh first"
 
 echo
 echo "  Domain         : $NEW_DOMAIN"
 echo "  DKIM selector : $DKIM_SELECTOR"
 echo "  MX server     : $MAIL_HOSTNAME"
+echo "  postmaster@   : $POSTMASTER_TARGET"
 echo
 ask "Continue? [y/N]:"
 read -r confirm
@@ -73,6 +87,19 @@ else
 fi
 ok "Added to virtual_mailbox_domains"
 
+# Installations created before alias support have no virtual_alias_maps yet.
+if ! postconf -h virtual_alias_maps | grep -Fq 'hash:/etc/postfix/virtual'; then
+    CURRENT_ALIAS_MAPS=$(postconf -h virtual_alias_maps)
+    postconf -e "virtual_alias_maps = ${CURRENT_ALIAS_MAPS:+${CURRENT_ALIAS_MAPS}, }hash:/etc/postfix/virtual"
+fi
+touch /etc/postfix/virtual
+for alias in postmaster abuse; do
+    awk -v k="${alias}@${NEW_DOMAIN}" '$1 == k {f=1} END {exit !f}' /etc/postfix/virtual \
+        || printf '%s\t%s\n' "${alias}@${NEW_DOMAIN}" "$POSTMASTER_TARGET" >> /etc/postfix/virtual
+done
+postmap /etc/postfix/virtual
+ok "postmaster@ and abuse@ deliver to ${POSTMASTER_TARGET}"
+
 # ── DKIM ──────────────────────────────────────────────────────────────────────
 step "DKIM key"
 
@@ -80,17 +107,21 @@ KEY_FILE="/var/lib/rspamd/dkim/${NEW_DOMAIN}.${DKIM_SELECTOR}.key"
 PUB_FILE="/var/lib/rspamd/dkim/${NEW_DOMAIN}.${DKIM_SELECTOR}.pub"
 
 mkdir -p /var/lib/rspamd/dkim
-rspamadm dkim_keygen \
-    -b 2048 \
-    -s "$DKIM_SELECTOR" \
-    -d "$NEW_DOMAIN" \
-    -k "$KEY_FILE" \
-    > "$PUB_FILE"
+if [[ -s "$KEY_FILE" && -s "$PUB_FILE" ]]; then
+    info "Reusing the existing DKIM key for ${DKIM_SELECTOR}"
+else
+    rspamadm dkim_keygen \
+        -b 2048 \
+        -s "$DKIM_SELECTOR" \
+        -d "$NEW_DOMAIN" \
+        -k "$KEY_FILE" \
+        > "$PUB_FILE"
+fi
 
 chown _rspamd:_rspamd "$KEY_FILE" "$PUB_FILE"
 chmod 440 "$KEY_FILE"
 
-if ! grep -q "^${NEW_DOMAIN}" /etc/rspamd/dkim_selectors.map 2>/dev/null; then
+if ! awk -v d="$NEW_DOMAIN" '$1 == d {f=1} END {exit !f}' /etc/rspamd/dkim_selectors.map 2>/dev/null; then
     echo "${NEW_DOMAIN}    ${DKIM_SELECTOR}" >> /etc/rspamd/dkim_selectors.map
 fi
 ok "DKIM key generated"
@@ -122,7 +153,7 @@ grep -oE '"[^"]*"' "$PUB_FILE" | tr -d '"\n'; echo
 echo
 echo -e "${CYAN}── DMARC ────────────────────────────────────────────────────${NC}"
 printf "  %-40s  TXT    %s\n" "_dmarc.${NEW_DOMAIN}." \
-    '"v=DMARC1; p=quarantine; rua=mailto:dmarc@'"${NEW_DOMAIN}"'"'
+    "\"v=DMARC1; p=quarantine; rua=mailto:postmaster@${NEW_DOMAIN}\""
 echo
 
 ok "Domain ${NEW_DOMAIN} added!"

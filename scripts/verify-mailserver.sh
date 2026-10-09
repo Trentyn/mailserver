@@ -11,7 +11,8 @@ bad()  { echo -e "${RED}[FAIL]${NC} $*"; failures=$((failures + 1)); }
 
 MAIL_HOSTNAME="${1:-$(postconf -h myhostname)}"
 MAIL_DOMAIN="${2:-$(postconf -h virtual_mailbox_domains | awk -F, '{gsub(/ /, "", $1); print $1}')}"
-DKIM_SELECTOR="${3:-mail$(date +%Y)}"
+DKIM_SELECTOR="${3:-$(awk -v d="$MAIL_DOMAIN" '$1 == d {print $2; exit}' /etc/rspamd/dkim_selectors.map 2>/dev/null || true)}"
+DKIM_SELECTOR="${DKIM_SELECTOR:-mail$(date +%Y)}"
 SERVER_IP=$(curl -4fsS --max-time 10 https://api.ipify.org || true)
 failures=0
 
@@ -31,10 +32,11 @@ if doveconf -n | grep -Eq '^mail_inbox_path = /var/mail/'; then
 else
 ok 'Dovecot virtual Maildir INBOX path'
 fi
-if doveconf -n | grep -Fq 'storage_size = 5G'; then
-  ok 'Dovecot mailbox quota: 5 GiB'
+QUOTA_SIZE=$(doveconf -n | sed -n '/quota "User quota" {/,/}/s/^[[:space:]]*storage_size = //p' | head -1)
+if [[ -n "$QUOTA_SIZE" ]]; then
+  ok "Dovecot mailbox quota: ${QUOTA_SIZE}"
 else
-  bad 'Dovecot mailbox quota is not set to 5 GiB'
+  bad 'Dovecot mailbox quota is not configured'
 fi
 
 DOVECOT_CONFIG=$(doveconf -n)
@@ -71,10 +73,13 @@ else
 fi
 
 rspamadm configtest >/dev/null && ok 'Rspamd configuration' || bad 'Rspamd configuration'
+# Retention 0 during setup deliberately skips the timer, so its absence is not a failure.
 if systemctl is-active --quiet mailserver-mail-cleanup.timer; then
   ok 'Trash and Junk cleanup timer'
+elif [[ -f /etc/systemd/system/mailserver-mail-cleanup.timer ]]; then
+  bad 'Trash and Junk cleanup timer is installed but not active'
 else
-  bad 'Trash and Junk cleanup timer is not active'
+  warn 'Trash and Junk cleanup is disabled (install-mail-cleanup-timer.sh enables it)'
 fi
 
 A=$(dig +short A "$MAIL_HOSTNAME" @1.1.1.1 | tail -1)

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 ok()    { echo -e "  ${GREEN}●${NC} $*"; }
 fail()  { echo -e "  ${RED}●${NC} $*"; }
@@ -14,7 +14,7 @@ die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Run as root"
 
-clear
+clear 2>/dev/null || true
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗"
 echo -e "║            Mail Server Status                            ║"
 echo -e "╚══════════════════════════════════════════════════════════╝${NC}"
@@ -24,7 +24,7 @@ SERVER_IP=$(curl -4 -s --max-time 3 ifconfig.me 2>/dev/null \
     || curl -4 -s --max-time 3 api.ipify.org 2>/dev/null \
     || hostname -I | awk '{print $1}')
 echo
-echo "  Server : ${BOLD}${MAIL_HOSTNAME}${NC}"
+echo -e "  Server : ${BOLD}${MAIL_HOSTNAME}${NC}"
 echo "  IP     : ${SERVER_IP}"
 echo "  Time  : $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -62,9 +62,8 @@ if [[ -z "$DOMAINS" ]]; then
     warn "No domains are configured"
 else
     for d in $DOMAINS; do
-        DKIM_FILES=(/var/lib/rspamd/dkim/${d}.*.key)
-        if [[ -e "${DKIM_FILES[0]}" ]]; then
-            SELECTOR=$(basename "${DKIM_FILES[0]}" | sed "s/${d}\.\(.*\)\.key/\1/")
+        SELECTOR=$(awk -v d="$d" '$1 == d {print $2; exit}' /etc/rspamd/dkim_selectors.map 2>/dev/null || true)
+        if [[ -n "$SELECTOR" && -f "/var/lib/rspamd/dkim/${d}.${SELECTOR}.key" ]]; then
             ok "${d}  (DKIM: ${SELECTOR})"
         else
             warn "${d}  (DKIM key not found!)"
@@ -191,11 +190,12 @@ case "$CHOICE" in
     ask "Domain:"
     read -r CHECK_DOMAIN
     CHECK_DOMAIN="${CHECK_DOMAIN,,}"
-    DKIM_FILES=(/var/lib/rspamd/dkim/${CHECK_DOMAIN}.*.pub)
-    if [[ -e "${DKIM_FILES[0]}" ]]; then
+    SELECTOR=$(awk -v d="$CHECK_DOMAIN" '$1 == d {print $2; exit}' /etc/rspamd/dkim_selectors.map 2>/dev/null || true)
+    PUB_FILE="/var/lib/rspamd/dkim/${CHECK_DOMAIN}.${SELECTOR}.pub"
+    if [[ -n "$SELECTOR" && -f "$PUB_FILE" ]]; then
         echo
-        echo "Public key for the DNS TXT record:"
-        grep -oE '"[^"]*"' "${DKIM_FILES[0]}" | tr -d '"\n'; echo
+        echo "TXT record ${SELECTOR}._domainkey.${CHECK_DOMAIN}:"
+        grep -oE '"[^"]*"' "$PUB_FILE" | tr -d '"\n'; echo
     else
         echo -e "${RED}[ERROR]${NC} DKIM key for ${CHECK_DOMAIN} was not found"
     fi

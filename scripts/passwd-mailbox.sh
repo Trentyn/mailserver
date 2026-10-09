@@ -14,6 +14,18 @@ ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
 
 [[ $EUID -eq 0 ]] || die "Run as root"
 
+# Exact-match helpers: addresses contain regex metacharacters ('.', '+'), so
+# grep/sed patterns could match or delete a different mailbox or domain.
+has_user() { awk -F: -v k="$1" '$1 == k {f=1} END {exit !f}' /etc/dovecot/users; }
+# Rewrite in place with cat so the file keeps its owner and mode.
+filter_file() {
+    local file="$1"; shift
+    [[ -f "$file" ]] || return 0
+    awk "$@" "$file" > "${file}.tmp"
+    cat "${file}.tmp" > "$file"
+    rm -f "${file}.tmp"
+}
+
 [[ -f /etc/dovecot/users ]] || die "/etc/dovecot/users was not found. Is the server configured?"
 
 step "Change password"
@@ -31,7 +43,7 @@ ask "Email address:"
 read -r EMAIL
 EMAIL="${EMAIL,,}"
 
-grep -q "^${EMAIL}:" /etc/dovecot/users || die "Mailbox '${EMAIL}' was not found"
+has_user "$EMAIL" || die "Mailbox '${EMAIL}' was not found"
 
 while true; do
     ask "New password:"
@@ -46,7 +58,7 @@ done
 HASH=$(doveadm pw -s SHA512-CRYPT -p "$NEW_PASS")
 
 # Replace this address in the users file
-sed -i "s|^${EMAIL}:.*|${EMAIL}:${HASH}|" /etc/dovecot/users
+filter_file /etc/dovecot/users -F: -v k="$EMAIL" -v h="$HASH" '$1 == k {print k ":" h; next} {print}'
 
 systemctl reload dovecot
 

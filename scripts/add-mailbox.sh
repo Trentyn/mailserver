@@ -14,6 +14,8 @@ ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
 
 [[ $EUID -eq 0 ]] || die "Run as root"
 
+has_user() { awk -F: -v k="$1" '$1 == k {f=1} END {exit !f}' /etc/dovecot/users; }
+
 # ── Current domains ────────────────────────────────────────────────────────────
 CURRENT_DOMAINS=$(postconf -h virtual_mailbox_domains 2>/dev/null | tr ',' '\n' | xargs) \
     || die "Postfix is not configured. Run setup.sh first"
@@ -38,7 +40,7 @@ else
     ask "Domain for mailbox:"
     read -r MAIL_DOMAIN
     MAIL_DOMAIN="${MAIL_DOMAIN,,}"
-    if ! echo "$CURRENT_DOMAINS" | grep -qw "$MAIL_DOMAIN"; then
+    if ! echo "$CURRENT_DOMAINS" | tr ' ' '\n' | grep -Fxq "$MAIL_DOMAIN"; then
         die "Domain '${MAIL_DOMAIN}' not found. Add it with add-domain.sh first"
     fi
 fi
@@ -53,7 +55,7 @@ USERNAME="${USERNAME,,}"
 EMAIL="${USERNAME}@${MAIL_DOMAIN}"
 
 # Check whether the mailbox already exists
-if grep -q "^${EMAIL}:" /etc/dovecot/users 2>/dev/null; then
+if has_user "$EMAIL"; then
     die "Mailbox ${EMAIL} already exists"
 fi
 
@@ -98,13 +100,22 @@ chown -R vmail:vmail "/var/mail/vhosts/${MAIL_DOMAIN}/${USERNAME}"
 chmod -R 700 "/var/mail/vhosts/${MAIL_DOMAIN}/${USERNAME}"
 ok "Maildir created"
 
+# Dovecot notices passwd-file changes by mtime with one-second resolution, so a
+# mailbox added right after another one can briefly look unknown. Reload and
+# wait until Dovecot resolves the new user before touching its mailboxes.
+systemctl reload postfix dovecot
+for _ in {1..20}; do
+    doveadm user "$EMAIL" >/dev/null 2>&1 && break
+    sleep 0.5
+done
+doveadm user "$EMAIL" >/dev/null 2>&1 || die "Dovecot does not see ${EMAIL} yet. Check: doveadm user ${EMAIL}"
+
+# Dovecot may already have auto-created them on first access.
+EXISTING_MAILBOXES=$(doveadm mailbox list -u "$EMAIL")
 for mailbox in Sent Drafts Trash Junk Archive; do
-    doveadm mailbox create -u "$EMAIL" "$mailbox"
+    grep -Fxq "$mailbox" <<<"$EXISTING_MAILBOXES" || doveadm mailbox create -u "$EMAIL" "$mailbox"
 done
 ok "System mailboxes created: Sent, Drafts, Trash, Junk, Archive"
-# ── Reload services ─────────────────────────────────────────────────────────────
-systemctl reload postfix dovecot
-
 # ── Authentication check ───────────────────────────────────────────────────
 sleep 1
 AUTH_RESULT=$(doveadm auth test "$EMAIL" "$PASSWORD" 2>&1 || true)

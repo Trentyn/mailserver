@@ -14,6 +14,18 @@ ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
 
 [[ $EUID -eq 0 ]] || die "Run as root"
 
+# Exact-match helpers: a regex such as "@example.com" would also match
+# example.com.au, so every lookup compares whole fields instead.
+domain_of() { awk -v d="$1" '{n = split($1, a, "@"); if (n == 2 && a[2] == d) print $1}'; }
+# Rewrite in place with cat so the file keeps its owner and mode.
+filter_file() {
+    local file="$1"; shift
+    [[ -f "$file" ]] || return 0
+    awk "$@" "$file" > "${file}.tmp"
+    cat "${file}.tmp" > "$file"
+    rm -f "${file}.tmp"
+}
+
 CURRENT_DOMAINS=$(postconf -h virtual_mailbox_domains 2>/dev/null | tr ',' '\n' | xargs) \
     || die "Postfix is not configured. Run setup.sh first"
 
@@ -34,7 +46,7 @@ echo "$CURRENT_DOMAINS" | tr ' ' '\n' | grep -qx "$DEL_DOMAIN" \
     || die "Domain '${DEL_DOMAIN}' not found"
 
 # Mailboxes for this domain
-DOMAIN_MAILBOXES=$(grep "@${DEL_DOMAIN}:" /etc/dovecot/users 2>/dev/null | cut -d: -f1 || true)
+DOMAIN_MAILBOXES=$(cut -d: -f1 /etc/dovecot/users 2>/dev/null | domain_of "$DEL_DOMAIN" || true)
 MAIL_DIR="/var/mail/vhosts/${DEL_DOMAIN}"
 MAIL_SIZE="no data"
 [[ -d "$MAIL_DIR" ]] && MAIL_SIZE=$(du -sh "$MAIL_DIR" 2>/dev/null | cut -f1)
@@ -75,19 +87,24 @@ else
 fi
 ok "Removed from virtual_mailbox_domains"
 
-# Dovecot users
-if grep -q "@${DEL_DOMAIN}:" /etc/dovecot/users 2>/dev/null; then
-    sed -i "/@${DEL_DOMAIN}:/d" /etc/dovecot/users
-    ok "Mailboxes removed from /etc/dovecot/users"
-fi
+# A field belongs to the domain when it is exactly "<user>@<domain>".
+IN_DOMAIN='function in_domain(f) { n = split(f, a, "@"); return n == 2 && a[2] == d }'
 
-# Postfix vmailbox
-if grep -qE "@${DEL_DOMAIN}|#.*${DEL_DOMAIN}" /etc/postfix/vmailbox 2>/dev/null; then
-    sed -i "/@${DEL_DOMAIN}/d" /etc/postfix/vmailbox
-    sed -i "/^#.*${DEL_DOMAIN}/d" /etc/postfix/vmailbox
-    postmap /etc/postfix/vmailbox
-    ok "Mailboxes removed from vmailbox"
-fi
+# Dovecot users
+filter_file /etc/dovecot/users -F: -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1)'
+ok "Mailboxes removed from /etc/dovecot/users"
+
+# Postfix maps: mailboxes, sender ownership, and aliases from or to this domain
+for map in /etc/postfix/vmailbox /etc/postfix/sender_login_maps /etc/postfix/virtual; do
+    [[ -f "$map" ]] || continue
+    if [[ "$map" == /etc/postfix/virtual ]]; then
+        ORPHANED=$(awk -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1) && in_domain($2) {print $1}' "$map")
+        [[ -n "$ORPHANED" ]] && warn "Removed aliases that delivered into ${DEL_DOMAIN}: $(echo "$ORPHANED" | paste -sd' ')"
+    fi
+    filter_file "$map" -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1) && !in_domain($2)'
+    postmap "$map"
+done
+ok "Mailboxes and aliases removed from Postfix maps"
 
 # Dovecot postmaster_address
 if grep -q "postmaster@${DEL_DOMAIN}" /etc/dovecot/local.conf 2>/dev/null; then
@@ -96,15 +113,12 @@ if grep -q "postmaster@${DEL_DOMAIN}" /etc/dovecot/local.conf 2>/dev/null; then
 fi
 
 # DKIM
-if grep -q "^${DEL_DOMAIN}" /etc/rspamd/dkim_selectors.map 2>/dev/null; then
-    sed -i "/^${DEL_DOMAIN}/d" /etc/rspamd/dkim_selectors.map
-    ok "Removed from dkim_selectors.map"
-fi
-DKIM_FILES=(/var/lib/rspamd/dkim/${DEL_DOMAIN}.*)
-if [[ -e "${DKIM_FILES[0]}" ]]; then
-    rm -f /var/lib/rspamd/dkim/${DEL_DOMAIN}.*
-    ok "DKIM keys removed"
-fi
+DEL_SELECTORS=$(awk -v d="$DEL_DOMAIN" '$1 == d {print $2}' /etc/rspamd/dkim_selectors.map 2>/dev/null || true)
+filter_file /etc/rspamd/dkim_selectors.map -v d="$DEL_DOMAIN" '$1 != d'
+for selector in $DEL_SELECTORS; do
+    rm -f "/var/lib/rspamd/dkim/${DEL_DOMAIN}.${selector}.key" "/var/lib/rspamd/dkim/${DEL_DOMAIN}.${selector}.pub"
+done
+[[ -n "$DEL_SELECTORS" ]] && ok "DKIM selector and keys removed"
 
 # Maildir
 if [[ -d "$MAIL_DIR" ]]; then

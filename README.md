@@ -15,13 +15,18 @@ Postfix provides SMTP, Dovecot CE 2.4 provides IMAP, POP3 and LMTP, rspamd provi
 
 Run only on a clean server:
 
-````bash
+```bash
+sudo apt update && sudo apt install -y git
+git clone https://github.com/Trentyn/mailserver.git
+cd mailserver
 sudo bash scripts/setup.sh
 ```
 
-The installer asks for the mail hostname, mail domain, DKIM selector, Let's Encrypt notification email, SSH port, first mailbox, and one Trash and Junk retention period. Use `0` to disable automatic cleanup for either folder. It creates a root-only setup summary at `/root/mailserver-setup-<domain>-<timestamp>.txt`.
+The installer asks for the mail hostname, mail domain, DKIM selector, Let's Encrypt notification email, SSH port, first mailbox, mailbox quota, and one Trash and Junk retention period (`0` disables automatic cleanup). Invalid answers are asked again instead of aborting. It creates a root-only setup summary at `/root/mailserver-setup-<domain>-<timestamp>.txt`.
 
-Do not run `setup.sh` again on an existing mail server. Use the maintenance scripts below.
+Before changing anything, setup checks the Debian release, that port 80 is free for Let's Encrypt, and that UFW is not already active. It waits for the A record instead of failing, and warns if outbound port 25 is blocked.
+
+If setup stops part-way, for example because the certificate could not be issued yet, fix the cause and run `setup.sh` again: it resumes an unfinished installation. After a successful installation it refuses to run again; use the maintenance scripts below.
 
 ## Scripts
 
@@ -38,7 +43,8 @@ Do not run `setup.sh` again on an existing mail server. Use the maintenance scri
 | `create-setup-summary.sh` | Recreate the root-only setup summary |
 | `set-mailbox-quota.sh` | Set the global storage quota for existing mailboxes |
 | `cleanup-mailboxes.sh` | Preview or remove old Trash and Junk messages |
-| `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |`n| `enable-junk-filtering.sh` | Add Junk delivery and Bayes training to an existing installation |
+| `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |
+| `enable-junk-filtering.sh` | Add Junk delivery and Bayes training to an installation made before Junk support |
 
 ## DNS records
 
@@ -51,6 +57,8 @@ For every mail domain configure:
 | TXT | `@` | `v=spf1 mx ~all` |
 | TXT | `<selector>._domainkey` | DKIM value printed by the script |
 | TXT | `_dmarc` | `v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com` |
+
+`postmaster@` and `abuse@` are aliases of the first mailbox (setup) or of a mailbox chosen in `add-domain.sh`. They live in `/etc/postfix/virtual`; run `postmap /etc/postfix/virtual` after editing it by hand.
 | PTR | VPS IP | `mx.example.com.` |
 
 Do not paste DNS zone syntax such as `IN TXT`, parentheses, or outer quotation marks into a DNS control panel. Paste only the TXT value.
@@ -59,11 +67,11 @@ Do not paste DNS zone syntax such as `IN TXT`, parentheses, or outer quotation m
 
 After DNS has propagated, run:
 
-````bash
+```bash
 sudo bash scripts/verify-mailserver.sh mx.example.com example.com mail2026
 ```
 
-The command is read-only. It checks local services, configuration, A, MX, SPF, DKIM, DMARC, PTR, and IMAPS TLS.
+All arguments are optional; without them the script uses the configured hostname, the first domain, and its DKIM selector. The command is read-only. It checks local services, configuration, A, MX, SPF, DKIM, DMARC, PTR, and IMAPS TLS.
 
 ## Mail client settings
 
@@ -80,7 +88,7 @@ The server exposes the standard IMAP system mailboxes `Sent`, `Drafts`, `Trash`,
 
 ## Storage and monitoring
 
-Every mailbox has a Dovecot-enforced 5 GiB storage quota. Mailboxes are Maildir directories under:
+Every mailbox has a Dovecot-enforced storage quota chosen during setup (5 GiB by default). Change it with `sudo bash scripts/set-mailbox-quota.sh 10G`. Mailboxes are Maildir directories under:
 
 ```text
 /var/mail/vhosts/<domain>/<user>/
@@ -88,7 +96,7 @@ Every mailbox has a Dovecot-enforced 5 GiB storage quota. Mailboxes are Maildir 
 
 Check free space and mailbox sizes:
 
-````bash
+```bash
 df -h /var/mail
 sudo du -sh /var/mail/vhosts/<domain>/*
 ```
@@ -99,19 +107,19 @@ The cleanup scripts never touch Inbox, Sent, Drafts, or any other mailbox. They 
 
 Preview the result first:
 
-````bash
+```bash
 sudo bash scripts/cleanup-mailboxes.sh --days 30
 ```
 
 Run a one-off cleanup after reviewing the preview:
 
-````bash
+```bash
 sudo bash scripts/cleanup-mailboxes.sh --apply --days 30
 ```
 
 For an existing server, install or change the daily systemd timer:
 
-````bash
+```bash
 sudo bash scripts/install-mail-cleanup-timer.sh 30
 systemctl list-timers mailserver-mail-cleanup.timer --all
 ```
@@ -120,23 +128,22 @@ Trash and Junk always share the same retention period. The timer has a randomize
 
 ## Junk handling
 
-Rspamd marks inbound spam and Dovecot files it into the standard IMAP `Junk` mailbox. Moving a message into `Junk` teaches Rspamd it is spam; moving it from `Junk` to another mailbox teaches Rspamd it is legitimate mail. Moving mail from `Junk` to `Trash` is deliberately not a ham report.
+Rspamd marks inbound spam and Dovecot files it into the standard IMAP `Junk` mailbox. Moving a message into `Junk` teaches Rspamd it is spam; moving it from `Junk` to another mailbox teaches Rspamd it is legitimate mail. Moving mail from `Junk` to `Trash` is deliberately not a ham report. Gmail may not expose `Junk` for external IMAP accounts; Roundcube and standard IMAP clients do.
 
-The cleanup scripts never touch Inbox, Sent, or Drafts. They remove old messages from `Trash` and `Junk` using the same retention period. Gmail may display `Trash` as `Bin` and may not expose `Junk` for external IMAP accounts; Roundcube and standard IMAP clients do. Trash and Junk always share one retention period; use `0` during setup to disable automatic cleanup.
 ## Stack and updates
 
 The installer runs `apt update` and `apt upgrade`, uses the official Dovecot CE 2.4 and rspamd repositories, and uses Debian packages for Postfix, Certbot, Redis and fail2ban. After major package updates, run `postfix check`, `doveconf -n`, `rspamadm configtest`, and the verification script.
 
 ## Firewall
 
-On a clean server, setup configures UFW with an automatic three-minute rollback. Before confirming `SSH-OK`, open a separate terminal and verify that SSH access works. If UFW is already active, setup stops without changing its rules.
+On a clean server, setup configures UFW with an automatic three-minute rollback. Before confirming `SSH-OK`, open a separate terminal and verify that SSH access works. If the rollback fires first, setup still finishes and tells you how to re-enable UFW. If UFW is already active, setup stops before changing anything.
 
 ## Add Junk handling to an existing server
 
-After pulling the current repository, install the tested Junk delivery, Bayes training, and shared cleanup timer without rerunning full setup:
+New installations already include Junk handling. For a server installed before it was added, pull the current repository and run:
 
 ```bash
 sudo bash scripts/enable-junk-filtering.sh 30
-``
+```
 
 The command makes a root-only configuration backup before changing services.

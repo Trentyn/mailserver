@@ -38,7 +38,12 @@ Do not edit Maildir files manually. Use an IMAP client or the provided scripts.
 sudo bash scripts/verify-mailserver.sh <mail-hostname> <mail-domain> <dkim-selector>
 ```
 
-The verifier is read-only and checks services, configuration, public DNS, PTR and TLS.
+The verifier is read-only and checks services, configuration, public DNS, PTR and TLS. Arguments are optional; it defaults to the configured hostname, first domain and its DKIM selector.
+
+## Aliases
+
+`postmaster@` and `abuse@` of every domain are Postfix aliases in `/etc/postfix/virtual`. To redirect them, edit the file and run `sudo postmap /etc/postfix/virtual`. Deleting a mailbox or domain removes aliases that delivered to it and prints them so you can repoint them.
+
 ## Spam and Junk
 
 Inbound messages that Rspamd classifies as spam are filed into the IMAP Junk mailbox. Move a false positive from Junk to Inbox to train it as ham; move actual spam into Junk to train it as spam. Do not move a message to Trash merely to train it: Trash is deliberately ignored by the ham-training rule.

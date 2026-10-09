@@ -36,7 +36,7 @@ $MAIL_HOSTNAME.  A    $SERVER_IP
 $MAIL_DOMAIN.     MX   10 $MAIL_HOSTNAME.
 $MAIL_DOMAIN.     TXT  "v=spf1 mx ~all"
 $DKIM_SELECTOR._domainkey.$MAIL_DOMAIN. TXT "$DKIM_VALUE"
-_dmarc.$MAIL_DOMAIN. TXT "v=DMARC1; p=quarantine; rua=mailto:$MAILBOX"
+_dmarc.$MAIL_DOMAIN. TXT "v=DMARC1; p=quarantine; rua=mailto:postmaster@$MAIL_DOMAIN"
 
 PTR - configure at the VPS provider
 $SERVER_IP  PTR  $MAIL_HOSTNAME.
