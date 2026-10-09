@@ -84,7 +84,7 @@ check "upgrade.sh brings an older installation up to date (through sudo)" \
      runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/upgrade.sh >/dev/null
      ! ufw status | grep -Eq '^80(/tcp)? ' && systemctl is-active --quiet postfix fail2ban rspamd && postfix check
      grep -q mailbox_hourly /etc/rspamd/local.d/ratelimit.conf
-     apt-config dump | grep -Fq 'APT::Periodic::Unattended-Upgrade \"1\"'"
+     [[ \$(apt-config shell v APT::Periodic::Unattended-Upgrade) == \"v='1'\" ]]"
 check "fail2ban dovecot jail reads Dovecot's log with the 2.4 filter" \
     "fail2ban-client get dovecot failregex | grep -q 'Login aborted' && fail2ban-client get dovecot logpath | grep -q /var/log/dovecot.log"
 
@@ -196,7 +196,7 @@ check "trusted-client remove" \
 
 echo "== Automatic updates"
 check "Debian security updates install automatically" \
-    "apt-config dump | grep -Fq 'APT::Periodic::Unattended-Upgrade \"1\"'
+    "[[ \$(apt-config shell v APT::Periodic::Unattended-Upgrade) == \"v='1'\" ]]
      systemctl is-enabled --quiet apt-daily-upgrade.timer && systemctl is-enabled --quiet apt-daily.timer"
 check "needrestart restarts services without asking" \
     "grep -q \"restart} = 'a'\" /etc/needrestart/conf.d/mailserver.conf && command -v needrestart"
@@ -276,6 +276,9 @@ check "delete-domain example.test.au leaves example.test intact" \
      [[ -f /var/lib/rspamd/dkim/example.test.mail\$(date +%Y).key && -d /var/mail/vhosts/example.test/info ]]
      doveadm auth test info@example.test \"\$PASSWORD\" | grep -q 'auth succeeded'"
 check "status works without a terminal" "echo 0 | env -u TERM bash scripts/status.sh >/dev/null"
+check "verify reports automatic updates and sending limits as OK" \
+    "out=\$(bash scripts/verify-mailserver.sh 2>&1)
+     grep -q 'OK.*Automatic security updates' <<< \"\$out\" && grep -q 'OK.*Sending limit per mailbox' <<< \"\$out\""
 check "verify passes every local check" \
     "out=\$(bash scripts/verify-mailserver.sh 2>&1)
      # DNS, PTR and the public certificate cannot pass for a test domain.

@@ -84,11 +84,14 @@ else
   warn 'Trash and Junk cleanup is disabled (install-mail-cleanup-timer.sh enables it)'
 fi
 
-if apt-config dump 2>/dev/null | grep -Fq 'APT::Periodic::Unattended-Upgrade "1"' \
-  && systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
-  ok 'Automatic security updates'
-else
+# Not "apt-config dump | grep -q": with pipefail, grep stopping early makes
+# apt-config die of SIGPIPE and the check fail on a working server.
+if [[ "$(apt-config shell v APT::Periodic::Unattended-Upgrade 2>/dev/null)" != "v='1'" ]]; then
   warn 'Automatic security updates are off (upgrade.sh turns them on)'
+elif ! systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
+  warn 'Automatic security updates are configured, but apt-daily-upgrade.timer is not enabled'
+else
+  ok 'Automatic security updates'
 fi
 if grep -q 'mailbox_hourly' /etc/rspamd/local.d/ratelimit.conf 2>/dev/null; then
   ok 'Sending limit per mailbox'

@@ -39,7 +39,7 @@ done
 
 # ── Updates and limits ────────────────────────────────────────────────────────
 header "Updates and sending limits"
-if apt-config dump 2>/dev/null | grep -Fq 'APT::Periodic::Unattended-Upgrade "1"'; then
+if [[ "$(apt-config shell v APT::Periodic::Unattended-Upgrade 2>/dev/null)" == "v='1'" ]]; then
     ok "Automatic security updates are on"
 else
     warn "Automatic security updates are off (run upgrade.sh)"
