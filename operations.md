@@ -37,6 +37,20 @@ Webmail identities need a matching grant. Postfix checks the envelope sender; th
 
 `/etc/postfix/sender_login_maps` and `/etc/postfix/virtual_mailboxes` are generated; do not edit them. After editing `/etc/postfix/virtual` by hand, run `sudo bash scripts/alias.sh sync`. Deleting a mailbox or domain removes it from alias target lists and prints aliases left without targets.
 
+## Sending limits
+
+Each mailbox may send to 100 recipients per hour and 500 per day, so a stolen password cannot be used to send spam and get the server's IP address blocklisted. A message to five people counts as five, and one message may not have more recipients than the hourly limit. Over the limit the server answers with a temporary error ("Sending limit of 100 recipients per hour reached, try again later") and the mail client reports that it could not send. Inbound mail is never limited.
+
+```bash
+sudo bash scripts/send-limit.sh show                        # limits, exempt mailboxes, recent hits
+sudo bash scripts/send-limit.sh set 200 1000                # per hour, per day
+sudo bash scripts/send-limit.sh exempt news@example.com     # no limit for one mailbox
+sudo bash scripts/send-limit.sh unexempt news@example.com
+sudo bash scripts/send-limit.sh off
+```
+
+A mailbox you did not expect in the recent hits may have a stolen password: change it with `passwd-mailbox.sh`.
+
 ## Webmail on another server
 
 A webmail server logs everyone in from one IP address, so a few wrong passwords would make fail2ban ban it and cut off webmail for all users. Exempt the address the webmail server connects *from*:
@@ -71,6 +85,17 @@ mailq
 sudo postqueue -f
 ```
 
+## Updates
+
+Debian security and stable updates install automatically every day (`unattended-upgrades`), and `needrestart` restarts the services that still use a replaced library. A new kernel needs a reboot, which `status.sh` reports; reboot at a quiet time with `sudo reboot`. The log is `/var/log/unattended-upgrades/`.
+
+Dovecot and Rspamd come from their own repositories and are not updated automatically, because their releases can change configuration. Update them by hand and check the result:
+
+```bash
+sudo apt update && sudo apt upgrade
+sudo doveconf -n >/dev/null && sudo rspamadm configtest && sudo bash scripts/verify-mailserver.sh
+```
+
 ## Upgrading an older installation
 
 After `git pull` on a server installed by an earlier version:
@@ -79,7 +104,7 @@ After `git pull` on a server installed by an earlier version:
 sudo bash scripts/upgrade.sh
 ```
 
-It is idempotent and backs up what it changes. It closes port 80 outside certificate renewals, installs the fail2ban filter for Dovecot 2.4 (earlier versions never banned IMAP/POP3 password guessing), adds Dovecot log rotation, and creates the maps used by `alias.sh` and `send-as.sh`.
+It is idempotent and backs up what it changes. It closes port 80 outside certificate renewals, installs the fail2ban filter for Dovecot 2.4 (earlier versions never banned IMAP/POP3 password guessing), adds Dovecot log rotation, creates the maps used by `alias.sh` and `send-as.sh`, sets the default sending limits and turns on automatic security updates.
 
 A server installed before Junk support also needs `sudo bash scripts/enable-junk-filtering.sh 30`. `create-setup-summary.sh` recreates the root-only setup summary.
 

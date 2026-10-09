@@ -24,6 +24,8 @@ Before changing anything it checks the Debian release, that port 80 is free, and
 
 `postmaster@` and `abuse@` become aliases of the first mailbox; DMARC reports go to `postmaster@`. A root-only summary with the DNS records and the first password is written to `/root/mailserver-setup-<domain>-<timestamp>.txt`; store the password and delete the file.
 
+Setup also turns on automatic Debian security updates and limits each mailbox to 100 recipients per hour and 500 per day; see [operations.md](operations.md) to change either.
+
 ## Firewall
 
 UFW allows SSH, SMTP (25, 465, 587), IMAP (143, 993) and POP3 (110, 995). Port 80 stays closed; certbot hooks open it only while a renewal runs, and leave a port 80 rule you add yourself untouched.
@@ -44,4 +46,4 @@ In a DNS control panel, paste only the TXT value: no `IN TXT`, parentheses or ou
 
 ## Stack
 
-Postfix, Certbot, Redis and fail2ban come from Debian; Dovecot CE 2.4 and Rspamd from their official repositories. Setup runs `apt upgrade` first. After major package updates, run `postfix check`, `doveconf -n`, `rspamadm configtest` and `verify-mailserver.sh`.
+Postfix, Certbot, Redis and fail2ban come from Debian and update automatically; Dovecot CE 2.4 and Rspamd come from their official repositories and are updated by hand. Setup runs `apt upgrade` first. After major package updates, run `postfix check`, `doveconf -n`, `rspamadm configtest` and `verify-mailserver.sh`.

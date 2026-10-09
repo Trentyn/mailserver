@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/ratelimit.sh
+. "$SCRIPT_DIR/lib/ratelimit.sh"
 require_root
 
 # Status lines use colored bullets instead of the [OK]/[WARN] prefixes.
@@ -34,6 +36,22 @@ for svc in postfix dovecot rspamd redis-server fail2ban; do
         fail "$svc — STOPPED"
     fi
 done
+
+# ── Updates and limits ────────────────────────────────────────────────────────
+header "Updates and sending limits"
+if apt-config dump 2>/dev/null | grep -Fq 'APT::Periodic::Unattended-Upgrade "1"'; then
+    ok "Automatic security updates are on"
+else
+    warn "Automatic security updates are off (run upgrade.sh)"
+fi
+if [[ -f /run/reboot-required ]]; then
+    warn "A reboot is needed to finish installing updates (new kernel)"
+fi
+if grep -q 'mailbox_hourly' /etc/rspamd/local.d/ratelimit.conf 2>/dev/null; then
+    ok "Sending limit: $(send_limits | awk '{print $1 " recipients per hour, " $2 " per day"}')"
+else
+    warn "No sending limit per mailbox (send-limit.sh)"
+fi
 
 # ── TLS certificate ────────────────────────────────────────────────────────────
 header "TLS certificate"

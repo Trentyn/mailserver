@@ -75,10 +75,16 @@ check "hooks leave an administrator's port 80 rule alone" \
 check "deploy hook keeps the key readable by Dovecot" \
     "/etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh && [[ \$(stat -c %G:%a /etc/letsencrypt/live/mx.example.test/privkey.pem) == dovecot:640 ]]"
 
-check "upgrade.sh closes the old permanent port 80 rule and keeps everything working" \
+# An older installation: port 80 open for good, no sending limits and no
+# automatic updates. upgrade.sh runs through sudo, as an administrator would.
+check "upgrade.sh brings an older installation up to date (through sudo)" \
     "ufw allow 80/tcp comment 'HTTP Lets Encrypt' >/dev/null
-     bash scripts/upgrade.sh >/dev/null
-     ! ufw status | grep -Eq '^80(/tcp)? ' && systemctl is-active --quiet postfix fail2ban && postfix check"
+     rm -f /etc/rspamd/local.d/ratelimit.conf /etc/apt/apt.conf.d/52mailserver-auto-upgrades
+     systemctl reload rspamd
+     runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/upgrade.sh >/dev/null
+     ! ufw status | grep -Eq '^80(/tcp)? ' && systemctl is-active --quiet postfix fail2ban rspamd && postfix check
+     grep -q mailbox_hourly /etc/rspamd/local.d/ratelimit.conf
+     apt-config dump | grep -Fq 'APT::Periodic::Unattended-Upgrade \"1\"'"
 check "fail2ban dovecot jail reads Dovecot's log with the 2.4 filter" \
     "fail2ban-client get dovecot failregex | grep -q 'Login aborted' && fail2ban-client get dovecot logpath | grep -q /var/log/dovecot.log"
 
@@ -187,6 +193,65 @@ check "trusted-client accepts an IP and a hostname" \
 check "trusted-client remove" \
     "bash scripts/trusted-client.sh remove 203.0.113.7 >/dev/null && bash scripts/trusted-client.sh remove one.one.one.one >/dev/null
      ! fail2ban-client get dovecot ignoreip | grep -Eq '203.0.113.7|one.one.one.one'"
+
+echo "== Automatic updates"
+check "Debian security updates install automatically" \
+    "apt-config dump | grep -Fq 'APT::Periodic::Unattended-Upgrade \"1\"'
+     systemctl is-enabled --quiet apt-daily-upgrade.timer && systemctl is-enabled --quiet apt-daily.timer"
+check "needrestart restarts services without asking" \
+    "grep -q \"restart} = 'a'\" /etc/needrestart/conf.d/mailserver.conf && command -v needrestart"
+check "unattended-upgrade runs (dry run)" "unattended-upgrade --dry-run"
+
+echo "== Sending limits"
+limited() {  # limited LOGIN RCPTS: one message from LOGIN to comma-separated RCPTS
+    swaks --server "$IP:587" --tls --auth LOGIN --auth-user "$1" --auth-password "$PASSWORD" \
+        --from "$1" --to "$2" --header "Subject: limit $1"
+}
+export -f limited
+# Only one domain exists, so add-mailbox does not ask for it.
+for u in lim1 lim2 lim3; do
+    printf '%s\n%s\n%s\ny\n' "$u" "$PASSWORD" "$PASSWORD" | bash scripts/add-mailbox.sh >/dev/null 2>&1
+done
+check "default limit is 100 recipients per hour and 500 per day" \
+    "bash scripts/send-limit.sh show | grep -q '100 recipients per hour and 500 per day'
+     rspamadm configdump ratelimit | grep -q mailbox_daily"
+check "postmaster and mailer-daemon recipients do not switch the limit off" \
+    "! rspamadm configdump ratelimit | grep -A3 whitelisted_rcpts | grep -Eq 'postmaster|mailer-daemon'"
+check "send-limit.sh set works through sudo" \
+    "runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/send-limit.sh set 3 10 >/dev/null
+     [[ \$(cat /etc/mailserver/send-limit) == '3 10' ]]"
+sleep 3
+check "a mailbox may send up to its limit" \
+    "limited lim1@example.test info@example.test | smtp_ok
+     limited lim1@example.test info@example.test,lim2@example.test | smtp_ok"
+check "the next recipient is deferred with a clear message" \
+    "out=\$(limited lim1@example.test info@example.test)
+     smtp_reject 451 <<< \"\$out\" && grep -q 'Sending limit of 3 recipients per hour' <<< \"\$out\""
+check "adding postmaster@ as a recipient does not bypass the limit" \
+    "limited lim1@example.test postmaster@example.test | smtp_reject 451"
+check "one message may not have more recipients than the hourly limit" \
+    "limited lim2@example.test info@example.test,lim1@example.test,postmaster@example.test,info+x@example.test | smtp_reject 452"
+check "recipients are counted, not messages" \
+    "limited lim3@example.test info@example.test,lim1@example.test | smtp_ok
+     limited lim3@example.test info@example.test,lim1@example.test | smtp_reject 451"
+check "an exempt mailbox sends past the limit, and is limited again after unexempt" \
+    "bash scripts/send-limit.sh exempt lim1@example.test >/dev/null && sleep 3
+     limited lim1@example.test info@example.test | smtp_ok
+     bash scripts/send-limit.sh unexempt lim1@example.test >/dev/null && sleep 3
+     limited lim1@example.test info@example.test | smtp_reject 451"
+check "show lists the mailboxes that hit the limit" \
+    "bash scripts/send-limit.sh show | grep -q 'lim1@example.test (hourly)'"
+check "send-limit.sh rejects nonsense" \
+    "! bash scripts/send-limit.sh set 0 10 2>/dev/null && ! bash scripts/send-limit.sh set 50 10 2>/dev/null
+     ! bash scripts/send-limit.sh exempt nobody@example.test 2>/dev/null"
+check "send-limit.sh off removes the limit" \
+    "bash scripts/send-limit.sh off >/dev/null && sleep 3
+     limited lim1@example.test info@example.test | smtp_ok"
+check "deleting a mailbox drops its exemption" \
+    "bash scripts/send-limit.sh exempt lim2@example.test >/dev/null
+     printf 'lim2@example.test\nlim2@example.test\n' | bash scripts/delete-mailbox.sh >/dev/null
+     ! grep -q lim2@ /etc/mailserver/send-limit-exempt"
+bash scripts/send-limit.sh set 100 500 >/dev/null
 
 echo "== Maintenance scripts"
 check "add-domain rejects an invalid domain" \

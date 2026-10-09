@@ -81,6 +81,7 @@ ORPHANED=$(prune_aliases "@${DEL_DOMAIN}")
 [[ -n "$ORPHANED" ]] && warn "Removed aliases that only delivered into ${DEL_DOMAIN}: $(echo "$ORPHANED" | paste -sd' ')"
 # Send-as grants for the domain (address or @domain) or held by its mailboxes
 filter_file "$SEND_AS_FILE" -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1) && $1 != "@" d && !in_domain($2)'
+filter_file /etc/mailserver/send-limit-exempt -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($0)'
 sync_postfix_maps
 ok "Mailboxes, aliases and send-as grants removed"
 

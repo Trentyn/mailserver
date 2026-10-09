@@ -7,7 +7,9 @@
 #   - fail2ban: a Dovecot 2.4 filter, without which IMAP/POP3 password guessing
 #     was never banned;
 #   - rotation for /var/log/dovecot.log;
-#   - Postfix maps for aliases, catch-all and send-as grants.
+#   - Postfix maps for aliases, catch-all and send-as grants;
+#   - sending limits per mailbox (send-limit.sh);
+#   - automatic Debian security updates.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +21,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/fail2ban.sh"
 # shellcheck source=lib/maps.sh
 . "$SCRIPT_DIR/lib/maps.sh"
+# shellcheck source=lib/ratelimit.sh
+. "$SCRIPT_DIR/lib/ratelimit.sh"
+# shellcheck source=lib/updates.sh
+. "$SCRIPT_DIR/lib/updates.sh"
 require_root
 
 [[ -f /etc/postfix/main.cf && -f /etc/dovecot/local.conf ]] \
@@ -26,7 +32,8 @@ require_root
 
 BACKUP="/root/mailserver-upgrade-backup-$(date +%Y%m%d-%H%M%S)"
 install -d -m 0700 "$BACKUP"
-for f in /etc/fail2ban/jail.local /etc/postfix/main.cf /etc/postfix/virtual /etc/postfix/sender_login_maps; do
+for f in /etc/fail2ban/jail.local /etc/postfix/main.cf /etc/postfix/master.cf /etc/postfix/virtual /etc/postfix/sender_login_maps \
+    /etc/rspamd/local.d/ratelimit.conf; do
     [[ -f "$f" ]] && cp -a "$f" "$BACKUP/"
 done
 info "Backup of changed files: ${BACKUP}"
@@ -51,6 +58,17 @@ sync_postfix_maps
 postfix check
 systemctl reload postfix
 ok "Alias, catch-all and send-as maps are in place"
+
+step "Sending limits"
+write_rspamd_ratelimit_config
+write_submission_recipient_limit
+rspamadm configtest >/dev/null
+systemctl reload rspamd postfix
+ok "$(send_limits | awk '$1 == "off" {print "Sending limits are off"; exit} {print "Each mailbox may send to " $1 " recipients per hour and " $2 " per day"}')"
+
+step "Automatic updates"
+install_auto_updates
+ok "Debian security updates install automatically every day"
 
 echo
 ok "Upgrade complete. Run: sudo bash ${SCRIPT_DIR}/verify-mailserver.sh"

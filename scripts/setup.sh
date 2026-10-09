@@ -14,6 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/maps.sh"
 # shellcheck source=lib/fail2ban.sh
 . "$SCRIPT_DIR/lib/fail2ban.sh"
+# shellcheck source=lib/ratelimit.sh
+. "$SCRIPT_DIR/lib/ratelimit.sh"
+# shellcheck source=lib/updates.sh
+. "$SCRIPT_DIR/lib/updates.sh"
 require_root
 
 STATE_DIR=/etc/mailserver
@@ -258,6 +262,9 @@ echo "  postfix:  $(postconf -h mail_version 2>/dev/null || echo 'n/a')"
 echo "  dovecot:  $(dovecot --version 2>/dev/null | head -1 || echo 'n/a')"
 echo "  rspamd:   $(rspamd --version 2>/dev/null | head -1 || echo 'n/a')"
 echo "  certbot:  $(certbot --version 2>/dev/null || echo 'n/a')"
+
+install_auto_updates
+ok "Debian security updates install automatically every day"
 
 # ═════════════════════════════════════════════════════════════════════════════
 step "System"
@@ -689,6 +696,9 @@ mkdir -p /etc/rspamd/local.d
 
 # Redis-backed Bayes and the spam marker that files mail into Junk.
 write_rspamd_junk_config
+# Recipients per hour and per day for each mailbox (send-limit.sh).
+write_rspamd_ratelimit_config
+write_submission_recipient_limit
 
 cat > /etc/rspamd/local.d/worker-proxy.inc << 'EOF'
 milter = yes;
@@ -940,6 +950,7 @@ SMTP submission: ${MAIL_HOSTNAME}:587 (STARTTLS)
 SMTP SSL: ${MAIL_HOSTNAME}:465 (SSL/TLS)
 Mailbox quota: ${MAILBOX_QUOTA}
 Trash and Junk retention: ${MAIL_RETENTION_DAYS} days (0 = disabled)
+Sending limit per mailbox: $(send_limits | awk '{print $1 " recipients per hour, " $2 " per day"}') (send-limit.sh)
 
 DNS RECORDS — add in the DNS provider
 ${MAIL_HOSTNAME}.    A      ${SERVER_IP}
@@ -973,6 +984,7 @@ echo "  SMTP   : ${MAIL_HOSTNAME}:587  (STARTTLS)"
 echo
 echo "  Add a domain  : sudo bash ${SCRIPT_DIR}/add-domain.sh"
 echo "  Add a mailbox : sudo bash ${SCRIPT_DIR}/add-mailbox.sh"
+echo "  Sending limit : sudo bash ${SCRIPT_DIR}/send-limit.sh show"
 echo "  Status        : sudo bash ${SCRIPT_DIR}/status.sh"
 echo
 echo -e "${YELLOW}${BOLD}⚠  Outbound port 25 (SMTP):${NC}"

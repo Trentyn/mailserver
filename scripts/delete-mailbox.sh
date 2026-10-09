@@ -67,7 +67,8 @@ ok "Removed from /etc/dovecot/users"
 filter_file /etc/postfix/vmailbox -v k="$EMAIL" '$1 != k'
 postmap /etc/postfix/vmailbox
 filter_file "$SEND_AS_FILE" -v e="$EMAIL" '$1 != e && $2 != e'
-ok "Removed from vmailbox and send-as grants"
+filter_file /etc/mailserver/send-limit-exempt -v e="$EMAIL" '$0 != e'
+ok "Removed from vmailbox, send-as grants and sending-limit exemptions"
 
 ORPHANED=$(prune_aliases "$EMAIL")
 if [[ -n "$ORPHANED" ]]; then

@@ -84,6 +84,18 @@ else
   warn 'Trash and Junk cleanup is disabled (install-mail-cleanup-timer.sh enables it)'
 fi
 
+if apt-config dump 2>/dev/null | grep -Fq 'APT::Periodic::Unattended-Upgrade "1"' \
+  && systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
+  ok 'Automatic security updates'
+else
+  warn 'Automatic security updates are off (upgrade.sh turns them on)'
+fi
+if grep -q 'mailbox_hourly' /etc/rspamd/local.d/ratelimit.conf 2>/dev/null; then
+  ok 'Sending limit per mailbox'
+else
+  warn 'No sending limit per mailbox (send-limit.sh set, or upgrade.sh)'
+fi
+
 A=$(dig +short A "$MAIL_HOSTNAME" @1.1.1.1 | tail -1)
 [[ "$A" == "$SERVER_IP" ]] && ok "A ${MAIL_HOSTNAME} -> ${SERVER_IP}" || bad "A ${MAIL_HOSTNAME} is '${A:-missing}', expected ${SERVER_IP}"
 
