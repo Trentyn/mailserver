@@ -45,7 +45,10 @@ If setup stops part-way, for example because the certificate could not be issued
 | `cleanup-mailboxes.sh` | Preview or remove old Trash and Junk messages |
 | `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |
 | `enable-junk-filtering.sh` | Add Junk delivery and Bayes training to an installation made before Junk support |
-| `install-renewal-hooks.sh` | Close port 80 on an older installation and open it only during certificate renewal |
+| `alias.sh` | Add, remove and list aliases and catch-all addresses |
+| `send-as.sh` | Allow a mailbox to send as another address or a whole domain |
+| `trusted-client.sh` | Exempt a webmail server (IP or DDNS hostname) from fail2ban bans |
+| `upgrade.sh` | Bring a server installed by an older version up to date |
 
 ## DNS records
 
@@ -59,7 +62,7 @@ For every mail domain configure:
 | TXT | `<selector>._domainkey` | DKIM value printed by the script |
 | TXT | `_dmarc` | `v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com` |
 
-`postmaster@` and `abuse@` are aliases of the first mailbox (setup) or of a mailbox chosen in `add-domain.sh`. They live in `/etc/postfix/virtual`; run `postmap /etc/postfix/virtual` after editing it by hand.
+`postmaster@` and `abuse@` are aliases of the first mailbox (setup) or of a mailbox chosen in `add-domain.sh`. Manage them and any other aliases with `alias.sh`.
 | PTR | VPS IP | `mx.example.com.` |
 
 Do not paste DNS zone syntax such as `IN TXT`, parentheses, or outer quotation marks into a DNS control panel. Paste only the TXT value.
@@ -137,9 +140,51 @@ The installer runs `apt update` and `apt upgrade`, uses the official Dovecot CE 
 
 ## Firewall
 
-UFW allows SSH, SMTP (25, 465, 587), IMAP (143, 993) and POP3 (110, 995). Port 80 stays closed: certbot renewal hooks open it while a renewal runs and close it afterwards. A port 80 rule you add yourself, for example for a web server, is left untouched. Servers installed before this change can switch with `sudo bash scripts/install-renewal-hooks.sh`.
+UFW allows SSH, SMTP (25, 465, 587), IMAP (143, 993) and POP3 (110, 995). Port 80 stays closed: certbot renewal hooks open it while a renewal runs and close it afterwards. A port 80 rule you add yourself, for example for a web server, is left untouched. Servers installed before this change switch with `sudo bash scripts/upgrade.sh`.
 
 On a clean server, setup configures UFW with an automatic three-minute rollback. Before confirming `SSH-OK`, open a separate terminal and verify that SSH access works. If the rollback fires first, setup still finishes and tells you how to re-enable UFW. If UFW is already active, setup stops before changing anything.
+
+## Aliases and sending identities
+
+```bash
+sudo bash scripts/alias.sh add sales@example.com info@example.com      # alias; repeat to add targets
+sudo bash scripts/alias.sh add @example.com info@example.com           # catch-all for unknown addresses
+sudo bash scripts/alias.sh remove sales@example.com [info@example.com]
+sudo bash scripts/alias.sh list
+```
+
+A mailbox may send only as addresses it owns, so a stolen password cannot be used to send mail as someone else. A mailbox owns its own address (including `+tag` variants) and every alias that delivers to it. A catch-all grants no sending rights. Grant anything else explicitly:
+
+```bash
+sudo bash scripts/send-as.sh grant bob@example.com ceo@example.com     # one address
+sudo bash scripts/send-as.sh grant admin@example.com @example.com      # every address of the domain
+sudo bash scripts/send-as.sh revoke bob@example.com ceo@example.com
+sudo bash scripts/send-as.sh list [mailbox]
+```
+
+Only domains hosted on this server can be granted; other domains would fail SPF, DKIM and DMARC. Webmail identities (for example in SnappyMail or Roundcube) need a matching grant. Postfix checks the envelope sender; the `From:` header is not checked yet.
+
+## Webmail on another server
+
+A webmail server logs every user in from its own IP address, so a few mistyped passwords would make fail2ban ban that address and cut off webmail for everyone. Exempt it:
+
+```bash
+sudo bash scripts/trusted-client.sh add 203.0.113.7           # static IP
+sudo bash scripts/trusted-client.sh add home.example.com      # DDNS hostname for a dynamic IP
+sudo bash scripts/trusted-client.sh list
+```
+
+Use the address the webmail server connects *from*. A webmail server published through a Cloudflare Tunnel still connects to IMAP and SMTP directly from its own internet connection, so add that connection's IP, or a DDNS hostname if it changes. Brute-force protection for the webmail login itself must then come from the webmail application or Cloudflare.
+
+## Upgrade an existing server
+
+After pulling a new version of this repository on a server installed earlier, run:
+
+```bash
+sudo bash scripts/upgrade.sh
+```
+
+It is idempotent and backs up the files it changes. It installs the certificate renewal hooks and closes port 80, installs the fail2ban filter for Dovecot 2.4 (earlier versions never banned IMAP/POP3 password guessing), adds Dovecot log rotation, and creates the Postfix maps used by `alias.sh` and `send-as.sh`.
 
 ## Add Junk handling to an existing server
 

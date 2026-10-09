@@ -1,6 +1,8 @@
 #!/bin/bash
 # Production readiness check for this mail server. Does not modify the system.
 set -euo pipefail
+# sbin directories are missing from PATH under "su" without "-".
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}   $*"; }

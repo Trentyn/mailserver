@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/maps.sh
+. "$SCRIPT_DIR/lib/maps.sh"
 require_root
 
 # ── Current domains ────────────────────────────────────────────────────────────
@@ -81,8 +83,7 @@ ok "Added to /etc/dovecot/users"
 # Postfix vmailbox
 echo "${EMAIL}    ${MAIL_DOMAIN}/${USERNAME}/" >> /etc/postfix/vmailbox
 postmap /etc/postfix/vmailbox
-echo "${EMAIL}    ${EMAIL}" >> /etc/postfix/sender_login_maps
-postmap /etc/postfix/sender_login_maps
+sync_postfix_maps
 ok "Added to vmailbox"
 
 # Maildir directory

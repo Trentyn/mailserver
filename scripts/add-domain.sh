@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/maps.sh
+. "$SCRIPT_DIR/lib/maps.sh"
 require_root
 
 MAIL_HOSTNAME=$(postconf -h myhostname 2>/dev/null) \
@@ -76,17 +78,12 @@ else
 fi
 ok "Added to virtual_mailbox_domains"
 
-# Installations created before alias support have no virtual_alias_maps yet.
-if ! postconf -h virtual_alias_maps | grep -Fq 'hash:/etc/postfix/virtual'; then
-    CURRENT_ALIAS_MAPS=$(postconf -h virtual_alias_maps)
-    postconf -e "virtual_alias_maps = ${CURRENT_ALIAS_MAPS:+${CURRENT_ALIAS_MAPS}, }hash:/etc/postfix/virtual"
-fi
 touch /etc/postfix/virtual
 for alias in postmaster abuse; do
     awk -v k="${alias}@${NEW_DOMAIN}" '$1 == k {f=1} END {exit !f}' /etc/postfix/virtual \
         || printf '%s\t%s\n' "${alias}@${NEW_DOMAIN}" "$POSTMASTER_TARGET" >> /etc/postfix/virtual
 done
-postmap /etc/postfix/virtual
+sync_postfix_maps
 ok "postmaster@ and abuse@ deliver to ${POSTMASTER_TARGET}"
 
 # ── DKIM ──────────────────────────────────────────────────────────────────────

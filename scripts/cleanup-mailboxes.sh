@@ -1,6 +1,8 @@
 #!/bin/bash
 # Preview or remove old messages from Trash and Junk for every virtual mailbox.
 set -Eeuo pipefail
+# sbin directories are missing from PATH under "su" without "-".
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 APPLY=false
 DAYS=30

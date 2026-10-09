@@ -1,6 +1,8 @@
 #!/bin/bash
 # Set the global Dovecot storage quota for every virtual mailbox.
 set -Eeuo pipefail
+# sbin directories are missing from PATH under "su" without "-".
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 QUOTA="${1:-5G}"
 LOCAL_CONF=/etc/dovecot/local.conf

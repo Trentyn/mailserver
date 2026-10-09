@@ -51,11 +51,17 @@ check "setup refuses to run on an installed server" \
     "bash scripts/setup.sh </dev/null 2>&1 | grep -q 'already installed'"
 check "setup summary is root-only" "[[ \$(stat -c %a /root/mailserver-setup-*.txt) == 600 ]]"
 check "shell environment is sourced from root's .bashrc" "grep -q '# mailserver' /root/.bashrc"
+check "shell environment is sourced from the sudo user's .bashrc" "grep -q '# mailserver' /home/admin/.bashrc"
+check "scripts work with a PATH lacking sbin (su without -)" \
+    "echo 0 | env PATH=/usr/bin:/bin bash scripts/status.sh >/dev/null
+     env PATH=/usr/bin:/bin bash scripts/verify-mailserver.sh 2>&1 | grep -q 'OK.*Postfix configuration'"
 check "Dovecot log rotation is valid" "logrotate -d /etc/logrotate.d/mailserver-dovecot"
 check "Trash and Junk cleanup timer is active" "systemctl is-active --quiet mailserver-mail-cleanup.timer"
 
 echo "== Firewall and certificate renewal"
 check "UFW is active" "ufw status | grep -q '^Status: active'"
+check "UFW allows the SSH port sshd listens on (2222), found through sudo" \
+    "ufw status | grep -Eq '^2222/tcp +ALLOW' && ! ufw status | grep -Eq '^22/tcp '"
 check "port 80 is closed outside renewals" "! ufw status | grep -Eq '^80(/tcp)? '"
 check "renewal pre hook opens port 80" \
     "/etc/letsencrypt/renewal-hooks/pre/mailserver-open-http.sh && ufw status | grep -Eq '^80/tcp +ALLOW'"
@@ -68,6 +74,13 @@ check "hooks leave an administrator's port 80 rule alone" \
      ufw status | grep -Eq '^80/tcp +ALLOW'; rc=\$?; ufw delete allow 80/tcp >/dev/null; exit \$rc"
 check "deploy hook keeps the key readable by Dovecot" \
     "/etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh && [[ \$(stat -c %G:%a /etc/letsencrypt/live/mx.example.test/privkey.pem) == dovecot:640 ]]"
+
+check "upgrade.sh closes the old permanent port 80 rule and keeps everything working" \
+    "ufw allow 80/tcp comment 'HTTP Lets Encrypt' >/dev/null
+     bash scripts/upgrade.sh >/dev/null
+     ! ufw status | grep -Eq '^80(/tcp)? ' && systemctl is-active --quiet postfix fail2ban && postfix check"
+check "fail2ban dovecot jail reads Dovecot's log with the 2.4 filter" \
+    "fail2ban-client get dovecot failregex | grep -q 'Login aborted' && fail2ban-client get dovecot logpath | grep -q /var/log/dovecot.log"
 
 echo "== Mail flow"
 check "inbound mail is delivered" \
@@ -118,6 +131,62 @@ c.logout()
 PY
      sleep 3
      (( \$(grep -c 'learn' /var/log/rspamd/rspamd.log) > before ))"
+
+echo "== Aliases and sending identities"
+send_as() {  # send_as LOGIN FROM: submit a message on 587 as LOGIN with envelope FROM
+    swaks --server "$IP:587" --tls --auth LOGIN --auth-user "$1" --auth-password "$PASSWORD" \
+        --from "$2" --to info@example.test --header "Subject: send-as $2"
+}
+export -f send_as
+# Only one domain exists yet, so add-mailbox does not ask for it.
+printf 'bob\n%s\n%s\ny\n' "$PASSWORD" "$PASSWORD" | bash scripts/add-mailbox.sh >/dev/null 2>&1
+check "alias delivers to its target" \
+    "bash scripts/alias.sh add sales@example.test info@example.test >/dev/null
+     swaks --server 127.0.0.1 --from ext@gmail.com --to sales@example.test --header 'Subject: to-sales' | smtp_ok && wait_for_mail info@example.test INBOX to-sales"
+check "alias target may send as the alias" "send_as info@example.test sales@example.test | smtp_ok"
+check "first mailbox may send as postmaster@" "send_as info@example.test postmaster@example.test | smtp_ok"
+check "other mailboxes may not send as the alias" "send_as bob@example.test sales@example.test | smtp_reject 553"
+check "a mailbox may send from its +extension address" "send_as info@example.test info+news@example.test | smtp_ok"
+check "alias cannot shadow an existing mailbox" \
+    "! bash scripts/alias.sh add bob@example.test info@example.test 2>/dev/null"
+check "catch-all receives mail for unknown addresses" \
+    "bash scripts/alias.sh add @example.test info@example.test >/dev/null
+     swaks --server 127.0.0.1 --from ext@gmail.com --to random@example.test --header 'Subject: to-random' | smtp_ok && wait_for_mail info@example.test INBOX to-random"
+check "catch-all does not swallow mail for existing mailboxes" \
+    "swaks --server 127.0.0.1 --from ext@gmail.com --to bob@example.test --header 'Subject: to-bob' | smtp_ok
+     wait_for_mail bob@example.test INBOX to-bob && ! doveadm search -u info@example.test mailbox INBOX subject to-bob | grep -q ."
+check "catch-all grants no sending rights" "send_as info@example.test random@example.test | smtp_reject 553"
+check "send-as grant allows another address" \
+    "bash scripts/send-as.sh grant bob@example.test ceo@example.test >/dev/null && send_as bob@example.test ceo@example.test | smtp_ok"
+check "send-as revoke takes the right away" \
+    "bash scripts/send-as.sh revoke bob@example.test ceo@example.test >/dev/null && send_as bob@example.test ceo@example.test | smtp_reject 553"
+check "domain-wide grant covers existing mailboxes and aliases" \
+    "bash scripts/send-as.sh grant bob@example.test @example.test >/dev/null
+     send_as bob@example.test info@example.test | smtp_ok && send_as bob@example.test anything@example.test | smtp_ok
+     bash scripts/send-as.sh revoke bob@example.test @example.test >/dev/null
+     send_as bob@example.test info@example.test | smtp_reject 553"
+check "send-as refuses domains this server does not host" \
+    "! bash scripts/send-as.sh grant bob@example.test boss@gmail.com 2>/dev/null"
+check "deleting a mailbox keeps the other targets of its aliases" \
+    "bash scripts/alias.sh add team@example.test bob@example.test >/dev/null
+     bash scripts/alias.sh add team@example.test info@example.test >/dev/null
+     printf 'bob@example.test\nbob@example.test\n' | bash scripts/delete-mailbox.sh >/dev/null
+     awk '\$1 == \"team@example.test\"' /etc/postfix/virtual | grep -qx 'team@example.test.info@example.test'
+     ! grep -q 'bob@example.test' /etc/postfix/virtual /etc/postfix/sender_login_maps /etc/postfix/virtual_mailboxes"
+check "alias remove drops aliases and the catch-all" \
+    "bash scripts/alias.sh remove @example.test >/dev/null && bash scripts/alias.sh remove sales@example.test info@example.test >/dev/null
+     ! grep -Eq '^(@example.test|sales@example.test)[[:space:]]' /etc/postfix/virtual
+     swaks --server 127.0.0.1 --from ext@gmail.com --to random@example.test | smtp_reject 550"
+check "alias.sh sync applies a hand-edited alias" \
+    "printf 'hand@example.test\tinfo@example.test\n' >> /etc/postfix/virtual && bash scripts/alias.sh sync >/dev/null
+     send_as info@example.test hand@example.test | smtp_ok"
+check "trusted-client accepts an IP and a hostname" \
+    "bash scripts/trusted-client.sh add 203.0.113.7 >/dev/null && bash scripts/trusted-client.sh add one.one.one.one >/dev/null
+     ips=\$(fail2ban-client get dovecot ignoreip)
+     grep -q 203.0.113.7 <<< \"\$ips\" && grep -q one.one.one.one <<< \"\$ips\""
+check "trusted-client remove" \
+    "bash scripts/trusted-client.sh remove 203.0.113.7 >/dev/null && bash scripts/trusted-client.sh remove one.one.one.one >/dev/null
+     ! fail2ban-client get dovecot ignoreip | grep -Eq '203.0.113.7|one.one.one.one'"
 
 echo "== Maintenance scripts"
 check "add-domain rejects an invalid domain" \

@@ -42,7 +42,9 @@ The verifier is read-only and checks services, configuration, public DNS, PTR an
 
 ## Aliases
 
-`postmaster@` and `abuse@` of every domain are Postfix aliases in `/etc/postfix/virtual`. To redirect them, edit the file and run `sudo postmap /etc/postfix/virtual`. Deleting a mailbox or domain removes aliases that delivered to it and prints them so you can repoint them.
+`postmaster@` and `abuse@` of every domain are aliases. Manage aliases, catch-all addresses and sending rights with `alias.sh` and `send-as.sh` (see the README). Deleting a mailbox or domain removes it from alias target lists, removes aliases left without targets and prints them so you can recreate them.
+
+`/etc/postfix/sender_login_maps` and `/etc/postfix/virtual_mailboxes` are generated; do not edit them by hand. If you edit `/etc/postfix/virtual` directly, apply it with `sudo bash scripts/alias.sh sync`.
 
 ## Spam and Junk
 

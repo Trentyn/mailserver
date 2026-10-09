@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/maps.sh
+. "$SCRIPT_DIR/lib/maps.sh"
 require_root
 
 CURRENT_DOMAINS=$(postconf -h virtual_mailbox_domains 2>/dev/null | tr ',' '\n' | xargs) \
@@ -73,16 +75,14 @@ filter_file /etc/dovecot/users -F: -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($
 ok "Mailboxes removed from /etc/dovecot/users"
 
 # Postfix maps: mailboxes, sender ownership, and aliases from or to this domain
-for map in /etc/postfix/vmailbox /etc/postfix/sender_login_maps /etc/postfix/virtual; do
-    [[ -f "$map" ]] || continue
-    if [[ "$map" == /etc/postfix/virtual ]]; then
-        ORPHANED=$(awk -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1) && in_domain($2) {print $1}' "$map")
-        [[ -n "$ORPHANED" ]] && warn "Removed aliases that delivered into ${DEL_DOMAIN}: $(echo "$ORPHANED" | paste -sd' ')"
-    fi
-    filter_file "$map" -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1) && !in_domain($2)'
-    postmap "$map"
-done
-ok "Mailboxes and aliases removed from Postfix maps"
+filter_file /etc/postfix/vmailbox -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1)'
+postmap /etc/postfix/vmailbox
+ORPHANED=$(prune_aliases "@${DEL_DOMAIN}")
+[[ -n "$ORPHANED" ]] && warn "Removed aliases that only delivered into ${DEL_DOMAIN}: $(echo "$ORPHANED" | paste -sd' ')"
+# Send-as grants for the domain (address or @domain) or held by its mailboxes
+filter_file "$SEND_AS_FILE" -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1) && $1 != "@" d && !in_domain($2)'
+sync_postfix_maps
+ok "Mailboxes, aliases and send-as grants removed"
 
 # Dovecot postmaster_address
 if grep -q "postmaster@${DEL_DOMAIN}" /etc/dovecot/local.conf 2>/dev/null; then

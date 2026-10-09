@@ -10,6 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/junk.sh"
 # shellcheck source=lib/tls.sh
 . "$SCRIPT_DIR/lib/tls.sh"
+# shellcheck source=lib/maps.sh
+. "$SCRIPT_DIR/lib/maps.sh"
+# shellcheck source=lib/fail2ban.sh
+. "$SCRIPT_DIR/lib/fail2ban.sh"
 require_root
 
 STATE_DIR=/etc/mailserver
@@ -119,8 +123,10 @@ DKIM_SELECTOR="${DKIM_SELECTOR,,}"
 LETSENCRYPT_EMAIL=$(read_val "Email for Let's Encrypt notices" "" \
     '^[^@]+@[^@]+\.[^@]+$' "Invalid email address")
 
-# Offer the port of the current SSH session; on a console, offer the default 22.
-DETECTED_SSH_PORT=$(awk '{print $4}' <<< "${SSH_CONNECTION:-}" 2>/dev/null || true)
+# Offer the port sshd actually listens on. sudo drops SSH_CONNECTION, so the
+# session variable is only a fallback; on a bare console, offer the default 22.
+DETECTED_SSH_PORT=$(/usr/sbin/sshd -T 2>/dev/null | awk '$1 == "port" {print $2; exit}' || true)
+[[ -n "$DETECTED_SSH_PORT" ]] || DETECTED_SSH_PORT=$(awk '{print $4}' <<< "${SSH_CONNECTION:-}" 2>/dev/null || true)
 while true; do
     SSH_PORT=$(read_val "SSH port to allow in UFW (double-check it)" "${DETECTED_SSH_PORT:-22}" \
         '^[0-9]{1,5}$' "The port must be a number")
@@ -387,7 +393,7 @@ local_transport = error:local mail delivery is disabled
 virtual_mailbox_domains = ${MAIL_DOMAIN}
 virtual_mailbox_base = /var/mail/vhosts
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
-virtual_alias_maps = hash:/etc/postfix/virtual
+virtual_alias_maps = hash:/etc/postfix/virtual, hash:/etc/postfix/virtual_mailboxes
 smtpd_sender_login_maps = hash:/etc/postfix/sender_login_maps
 virtual_minimum_uid = 100
 virtual_uid_maps = static:5000
@@ -458,14 +464,14 @@ EOF
 # First mailbox
 printf '%s\t%s/%s/\n' "$FIRST_EMAIL" "$MAIL_DOMAIN" "$FIRST_USER" > /etc/postfix/vmailbox
 postmap /etc/postfix/vmailbox
-printf '%s\t%s\n' "$FIRST_EMAIL" "$FIRST_EMAIL" > /etc/postfix/sender_login_maps
-postmap /etc/postfix/sender_login_maps
 # RFC 5321 requires a working postmaster@; it also receives DMARC reports.
 {
     printf 'postmaster@%s\t%s\n' "$MAIL_DOMAIN" "$FIRST_EMAIL"
     printf 'abuse@%s\t%s\n' "$MAIL_DOMAIN" "$FIRST_EMAIL"
 } > /etc/postfix/virtual
-postmap /etc/postfix/virtual
+# Who may send as which address; regenerated again once the first mailbox exists.
+: > "$SEND_AS_FILE"
+sync_postfix_maps
 
 # submission (587) and smtps (465) in master.cf. Comment out the stock entries
 # to avoid duplicates, but only on the first pass: a resumed run would
@@ -741,46 +747,8 @@ fi
 step "fail2ban"
 # ═════════════════════════════════════════════════════════════════════════════
 
-cat > /etc/fail2ban/jail.local << 'EOF'
-[DEFAULT]
-bantime  = 86400
-findtime = 3600
-maxretry = 5
-
-[sshd]
-enabled = true
-
-[postfix-sasl]
-enabled  = true
-port     = smtp,465,submission
-filter   = postfix[mode=auth]
-logpath  = /var/log/mail.log
-maxretry = 5
-
-[dovecot]
-enabled  = true
-port     = imap,imaps,pop3,pop3s
-logpath  = /var/log/dovecot.log
-maxretry = 5
-EOF
-# Dovecot writes its own log file, which grows forever without rotation.
-if ! grep -rqs '/var/log/dovecot.log' /etc/logrotate.d/; then
-    cat > /etc/logrotate.d/mailserver-dovecot << 'EOF'
-/var/log/dovecot.log {
-    weekly
-    rotate 8
-    missingok
-    notifempty
-    compress
-    delaycompress
-    postrotate
-        doveadm log reopen >/dev/null 2>&1 || true
-    endscript
-}
-EOF
-fi
-# fail2ban refuses to start when a jail logpath does not exist yet.
-touch /var/log/mail.log /var/log/dovecot.log
+write_fail2ban_config
+install_dovecot_logrotate
 ok "fail2ban configured"
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -789,6 +757,7 @@ step "First mailbox"
 
 HASH=$(doveadm pw -s SHA512-CRYPT -p "$FIRST_PASS")
 echo "${FIRST_EMAIL}:${HASH}" > /etc/dovecot/users
+sync_postfix_maps
 
 mkdir -p "/var/mail/vhosts/${MAIL_DOMAIN}/${FIRST_USER}"/{cur,new,tmp}
 chown -R vmail:vmail "/var/mail/vhosts/${MAIL_DOMAIN}"

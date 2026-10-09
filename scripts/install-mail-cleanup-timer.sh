@@ -1,6 +1,8 @@
 #!/bin/bash
 # Install a daily timer that removes old Trash and Junk messages.
 set -Eeuo pipefail
+# sbin directories are missing from PATH under "su" without "-".
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 DAYS="${1:-30}"
 [[ $EUID -eq 0 ]] || { echo 'Run as root.' >&2; exit 1; }
 [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || { echo 'Usage: sudo bash install-mail-cleanup-timer.sh [days]'; exit 2; }

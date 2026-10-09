@@ -1,5 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
+# sbin directories are missing from PATH under "su" without "-".
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 [[ $EUID -eq 0 ]] || { echo "Run: sudo bash scripts/create-setup-summary.sh"; exit 2; }
 MAIL_HOSTNAME=$(postconf -h myhostname)
 MAIL_DOMAIN=$(postconf -h virtual_mailbox_domains | awk -F, '{gsub(/ /, "", $1); print $1}')

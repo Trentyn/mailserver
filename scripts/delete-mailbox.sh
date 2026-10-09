@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/maps.sh
+. "$SCRIPT_DIR/lib/maps.sh"
 require_root
 
 [[ -f /etc/dovecot/users ]] || die "/etc/dovecot/users was not found. Is the server configured?"
@@ -43,7 +45,7 @@ echo "  Data: ${MAIL_DIR} (${MAIL_SIZE})"
 echo
 echo "The following will be deleted:"
 echo "  • entry from /etc/dovecot/users"
-echo "  • entries from /etc/postfix/vmailbox and sender_login_maps"
+echo "  • its entry in /etc/postfix/vmailbox and its send-as grants"
 echo "  • aliases in /etc/postfix/virtual that deliver to this mailbox"
 echo "  • all mail in ${MAIL_DIR}"
 echo
@@ -62,22 +64,17 @@ filter_file /etc/dovecot/users -F: -v k="$EMAIL" '$1 != k'
 ok "Removed from /etc/dovecot/users"
 
 # Postfix maps
-for map in /etc/postfix/vmailbox /etc/postfix/sender_login_maps; do
-    [[ -f "$map" ]] || continue
-    filter_file "$map" -v k="$EMAIL" '$1 != k'
-    postmap "$map"
-done
-ok "Removed from vmailbox and sender_login_maps"
+filter_file /etc/postfix/vmailbox -v k="$EMAIL" '$1 != k'
+postmap /etc/postfix/vmailbox
+filter_file "$SEND_AS_FILE" -v e="$EMAIL" '$1 != e && $2 != e'
+ok "Removed from vmailbox and send-as grants"
 
-if [[ -f /etc/postfix/virtual ]]; then
-    ORPHANED=$(awk -v e="$EMAIL" '$2 == e {print $1}' /etc/postfix/virtual)
-    if [[ -n "$ORPHANED" ]]; then
-        filter_file /etc/postfix/virtual -v e="$EMAIL" '$1 != e && $2 != e'
-        postmap /etc/postfix/virtual
-        warn "Removed aliases that delivered to ${EMAIL}: $(echo "$ORPHANED" | paste -sd' ')"
-        warn "Point them to another mailbox in /etc/postfix/virtual, then run: postmap /etc/postfix/virtual"
-    fi
+ORPHANED=$(prune_aliases "$EMAIL")
+if [[ -n "$ORPHANED" ]]; then
+    warn "Removed aliases that only delivered to ${EMAIL}: $(echo "$ORPHANED" | paste -sd' ')"
+    warn "Recreate them for another mailbox with: sudo bash ${SCRIPT_DIR}/alias.sh add ALIAS MAILBOX"
 fi
+sync_postfix_maps
 
 # Maildir
 if [[ -d "$MAIL_DIR" ]]; then
