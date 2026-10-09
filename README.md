@@ -8,7 +8,7 @@ Postfix provides SMTP, Dovecot CE 2.4 provides IMAP, POP3 and LMTP, rspamd provi
 
 - A clean Debian 12 or Debian 13 VPS with root access.
 - An A record for the mail hostname, such as `mx.example.com`, pointing to the VPS before setup.
-- Ports 25, 80, 110, 143, 465, 587, 993 and 995 available.
+- Ports 25, 80, 110, 143, 465, 587, 993 and 995 available. Port 80 is used only to issue and renew the certificate; the firewall keeps it closed otherwise.
 - Provider support for outbound TCP port 25. Many cloud providers block it by default.
 
 ## Install
@@ -45,6 +45,7 @@ If setup stops part-way, for example because the certificate could not be issued
 | `cleanup-mailboxes.sh` | Preview or remove old Trash and Junk messages |
 | `install-mail-cleanup-timer.sh` | Install daily automated Trash and Junk cleanup |
 | `enable-junk-filtering.sh` | Add Junk delivery and Bayes training to an installation made before Junk support |
+| `install-renewal-hooks.sh` | Close port 80 on an older installation and open it only during certificate renewal |
 
 ## DNS records
 
@@ -136,6 +137,8 @@ The installer runs `apt update` and `apt upgrade`, uses the official Dovecot CE 
 
 ## Firewall
 
+UFW allows SSH, SMTP (25, 465, 587), IMAP (143, 993) and POP3 (110, 995). Port 80 stays closed: certbot renewal hooks open it while a renewal runs and close it afterwards. A port 80 rule you add yourself, for example for a web server, is left untouched. Servers installed before this change can switch with `sudo bash scripts/install-renewal-hooks.sh`.
+
 On a clean server, setup configures UFW with an automatic three-minute rollback. Before confirming `SSH-OK`, open a separate terminal and verify that SSH access works. If the rollback fires first, setup still finishes and tells you how to re-enable UFW. If UFW is already active, setup stops before changing anything.
 
 ## Add Junk handling to an existing server
@@ -147,3 +150,14 @@ sudo bash scripts/enable-junk-filtering.sh 30
 ```
 
 The command makes a root-only configuration backup before changing services.
+
+## Development and tests
+
+Shared shell helpers live in `scripts/lib/`. `tests/integration.sh` installs the server in a Debian container with systemd (a self-signed certificate replaces Let's Encrypt), then checks mail flow, Junk handling, the firewall and renewal hooks, and every maintenance script:
+
+```bash
+bash tests/integration.sh                           # Debian 13
+DEBIAN_RELEASE=bookworm bash tests/integration.sh   # Debian 12
+```
+
+It needs Docker and internet access and takes a few minutes. CI runs ShellCheck and the integration test on Debian 12 and 13 for every push.

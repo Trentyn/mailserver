@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: for f in scripts/*.sh scripts/lib/*.sh tests/*.sh; do bash -n "$f"; done
+      - name: ShellCheck
+        run: shellcheck -x --severity=warning scripts/*.sh scripts/lib/*.sh tests/*.sh tests/stubs/*
+
+  integration:
+    needs: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and exercise the mail server in Debian ${{ matrix.debian }}
+        run: bash tests/integration.sh
+        env:
+          DEBIAN_RELEASE: ${{ matrix.debian }}

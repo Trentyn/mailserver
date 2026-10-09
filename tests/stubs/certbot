@@ -1,0 +1,22 @@
+#!/bin/bash
+# Test stand-in for certbot: issues a self-signed certificate for -d HOST.
+set -euo pipefail
+
+[[ "${1:-}" == --version ]] && { echo "certbot 0.0-test-stub"; exit 0; }
+if [[ -e /root/fail-cert ]]; then
+    echo "Simulated failure: DNS problem: NXDOMAIN looking up A for the domain" >&2
+    exit 1
+fi
+
+host=""
+while [[ $# -gt 0 ]]; do
+    [[ "$1" == -d ]] && { host="$2"; shift; }
+    shift
+done
+[[ -n "$host" ]] || { echo "certbot stub: missing -d HOST" >&2; exit 1; }
+
+mkdir -p "/etc/letsencrypt/live/$host"
+openssl req -x509 -newkey rsa:2048 -nodes -days 90 -subj "/CN=$host" \
+    -keyout "/etc/letsencrypt/live/$host/privkey.pem" \
+    -out "/etc/letsencrypt/live/$host/fullchain.pem" 2>/dev/null
+echo "Successfully received certificate (test stub)."

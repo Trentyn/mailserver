@@ -1,0 +1,6 @@
+#!/bin/bash
+# Test stand-in: Docker owns /etc/hostname, so only change the running hostname.
+if [[ "${1:-}" == set-hostname ]]; then
+    exec hostname "$2"
+fi
+exec /usr/bin/hostnamectl "$@"

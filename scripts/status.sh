@@ -2,17 +2,16 @@
 # Mail server status — services, domains, mailboxes, queue, fail2ban
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+require_root
 
+# Status lines use colored bullets instead of the [OK]/[WARN] prefixes.
 ok()    { echo -e "  ${GREEN}●${NC} $*"; }
 fail()  { echo -e "  ${RED}●${NC} $*"; }
 warn()  { echo -e "  ${YELLOW}●${NC} $*"; }
 header(){ echo -e "\n${BOLD}${CYAN}── $* ${NC}"; }
-ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
-die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-
-[[ $EUID -eq 0 ]] || die "Run as root"
 
 clear 2>/dev/null || true
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗"
@@ -20,9 +19,7 @@ echo -e "║            Mail Server Status                            ║"
 echo -e "╚══════════════════════════════════════════════════════════╝${NC}"
 
 MAIL_HOSTNAME=$(postconf -h myhostname 2>/dev/null || echo "not configured")
-SERVER_IP=$(curl -4 -s --max-time 3 ifconfig.me 2>/dev/null \
-    || curl -4 -s --max-time 3 api.ipify.org 2>/dev/null \
-    || hostname -I | awk '{print $1}')
+SERVER_IP=$(public_ipv4)
 echo
 echo -e "  Server : ${BOLD}${MAIL_HOSTNAME}${NC}"
 echo "  IP     : ${SERVER_IP}"
@@ -62,7 +59,7 @@ if [[ -z "$DOMAINS" ]]; then
     warn "No domains are configured"
 else
     for d in $DOMAINS; do
-        SELECTOR=$(awk -v d="$d" '$1 == d {print $2; exit}' /etc/rspamd/dkim_selectors.map 2>/dev/null || true)
+        SELECTOR=$(dkim_selector "$d")
         if [[ -n "$SELECTOR" && -f "/var/lib/rspamd/dkim/${d}.${SELECTOR}.key" ]]; then
             ok "${d}  (DKIM: ${SELECTOR})"
         else
@@ -190,7 +187,7 @@ case "$CHOICE" in
     ask "Domain:"
     read -r CHECK_DOMAIN
     CHECK_DOMAIN="${CHECK_DOMAIN,,}"
-    SELECTOR=$(awk -v d="$CHECK_DOMAIN" '$1 == d {print $2; exit}' /etc/rspamd/dkim_selectors.map 2>/dev/null || true)
+    SELECTOR=$(dkim_selector "$CHECK_DOMAIN")
     PUB_FILE="/var/lib/rspamd/dkim/${CHECK_DOMAIN}.${SELECTOR}.pub"
     if [[ -n "$SELECTOR" && -f "$PUB_FILE" ]]; then
         echo

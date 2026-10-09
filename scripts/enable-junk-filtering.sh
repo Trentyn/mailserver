@@ -4,6 +4,10 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/junk.sh
+. "$SCRIPT_DIR/lib/junk.sh"
 RETENTION_DAYS="${1:-30}"
 
 if (( EUID != 0 )); then
@@ -97,55 +101,8 @@ EOF
 
 grep -qxF '!include_try mailserver-junk.conf' /etc/dovecot/dovecot.conf || printf '\n!include_try mailserver-junk.conf\n' >> /etc/dovecot/dovecot.conf
 
-install -d -o root -g vmail -m 0750 /etc/dovecot/sieve /usr/lib/dovecot/sieve
-cat > /etc/dovecot/sieve/spam-to-junk.sieve <<'EOF'
-require ["fileinto", "mailbox"];
-if header :is "X-Rspamd-Deliver-To" "Junk" {
-  fileinto :create "Junk";
-  stop;
-}
-EOF
-cat > /etc/dovecot/sieve/learn-spam.sieve <<'EOF'
-require ["vnd.dovecot.pipe", "copy"];
-pipe :copy "rspamd-learn-spam";
-EOF
-cat > /etc/dovecot/sieve/learn-ham.sieve <<'EOF'
-require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment"];
-if environment :is "imap.mailbox" "Trash" { stop; }
-pipe :copy "rspamd-learn-ham";
-EOF
-cat > /usr/lib/dovecot/sieve/rspamd-learn-spam <<'EOF'
-#!/bin/sh
-exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_spam
-EOF
-cat > /usr/lib/dovecot/sieve/rspamd-learn-ham <<'EOF'
-#!/bin/sh
-exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_ham
-EOF
-sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/spam-to-junk.sieve
-sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/learn-spam.sieve
-sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/learn-ham.sieve
-chown root:vmail /etc/dovecot/sieve/* /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
-chmod 0640 /etc/dovecot/sieve/*.sieve /etc/dovecot/sieve/*.svbin
-chmod 0750 /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
-
-mkdir -p /etc/rspamd/local.d
-cat > /etc/rspamd/local.d/redis.conf <<'EOF'
-servers = "127.0.0.1:6379";
-EOF
-cat > /etc/rspamd/local.d/options.inc <<'EOF'
-task_timeout = 10s;
-EOF
-cat > /etc/rspamd/local.d/milter_headers.conf <<'EOF'
-use = ["spam-header"];
-routines {
-  spam-header {
-    header = "X-Rspamd-Deliver-To";
-    value = "Junk";
-    remove = 0;
-  }
-}
-EOF
+install_junk_sieve_rules
+write_rspamd_junk_config
 
 rspamadm configtest
 doveconf -n >/dev/null

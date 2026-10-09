@@ -6,7 +6,7 @@ Install only on a clean Debian 12 or Debian 13 VPS. If setup stops part-way, fix
 
 1. Create an A record for the chosen mail hostname, for example `mx.example.com`, pointing to the VPS IPv4 address.
 2. Ensure the provider permits outbound TCP port 25 (setup warns if it is blocked).
-3. Make sure nothing listens on port 80; certbot needs it to issue the certificate.
+3. Make sure nothing listens on port 80; certbot needs it to issue the certificate. After setup the firewall keeps port 80 closed except during certificate renewal.
 4. Connect to the VPS using SSH and clone this repository.
 
 ```bash

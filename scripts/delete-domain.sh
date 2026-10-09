@@ -2,29 +2,10 @@
 # Delete a domain and all of its mailboxes
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-
-info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-step()  { echo -e "\n${BOLD}${CYAN}══ $* ${NC}"; }
-ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
-
-[[ $EUID -eq 0 ]] || die "Run as root"
-
-# Exact-match helpers: a regex such as "@example.com" would also match
-# example.com.au, so every lookup compares whole fields instead.
-domain_of() { awk -v d="$1" '{n = split($1, a, "@"); if (n == 2 && a[2] == d) print $1}'; }
-# Rewrite in place with cat so the file keeps its owner and mode.
-filter_file() {
-    local file="$1"; shift
-    [[ -f "$file" ]] || return 0
-    awk "$@" "$file" > "${file}.tmp"
-    cat "${file}.tmp" > "$file"
-    rm -f "${file}.tmp"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+require_root
 
 CURRENT_DOMAINS=$(postconf -h virtual_mailbox_domains 2>/dev/null | tr ',' '\n' | xargs) \
     || die "Postfix is not configured. Run setup.sh first"
@@ -42,7 +23,7 @@ ask "Domain to delete:"
 read -r DEL_DOMAIN
 DEL_DOMAIN="${DEL_DOMAIN,,}"
 
-echo "$CURRENT_DOMAINS" | tr ' ' '\n' | grep -qx "$DEL_DOMAIN" \
+echo "$CURRENT_DOMAINS" | tr ' ' '\n' | grep -Fxq "$DEL_DOMAIN" \
     || die "Domain '${DEL_DOMAIN}' not found"
 
 # Mailboxes for this domain
@@ -86,9 +67,6 @@ else
     postconf -e "virtual_mailbox_domains = ${NEW_DOMAINS}"
 fi
 ok "Removed from virtual_mailbox_domains"
-
-# A field belongs to the domain when it is exactly "<user>@<domain>".
-IN_DOMAIN='function in_domain(f) { n = split(f, a, "@"); return n == 2 && a[2] == d }'
 
 # Dovecot users
 filter_file /etc/dovecot/users -F: -v d="$DEL_DOMAIN" "$IN_DOMAIN"' !in_domain($1)'

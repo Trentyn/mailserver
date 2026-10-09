@@ -2,25 +2,14 @@
 # Add a mail domain
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-
-info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-step()  { echo -e "\n${BOLD}${CYAN}══ $* ${NC}"; }
-ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
-
-[[ $EUID -eq 0 ]] || die "Run as root"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+require_root
 
 MAIL_HOSTNAME=$(postconf -h myhostname 2>/dev/null) \
     || die "Postfix is not configured. Run setup.sh first"
-SERVER_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null \
-    || curl -4 -s --max-time 5 api.ipify.org 2>/dev/null \
-    || hostname -I | awk '{print $1}')
+SERVER_IP=$(public_ipv4)
 
 info "Server: ${BOLD}${MAIL_HOSTNAME}${NC} (${SERVER_IP})"
 
@@ -50,7 +39,7 @@ ask "Mailbox for postmaster@${NEW_DOMAIN} and abuse@${NEW_DOMAIN} [${DEFAULT_POS
 read -r POSTMASTER_TARGET
 POSTMASTER_TARGET="${POSTMASTER_TARGET:-$DEFAULT_POSTMASTER}"
 POSTMASTER_TARGET="${POSTMASTER_TARGET,,}"
-awk -F: -v k="$POSTMASTER_TARGET" '$1 == k {f=1} END {exit !f}' /etc/dovecot/users 2>/dev/null \
+has_user "$POSTMASTER_TARGET" \
     || die "Mailbox '${POSTMASTER_TARGET}' does not exist. Create it with add-mailbox.sh first"
 
 echo
@@ -121,7 +110,7 @@ fi
 chown _rspamd:_rspamd "$KEY_FILE" "$PUB_FILE"
 chmod 440 "$KEY_FILE"
 
-if ! awk -v d="$NEW_DOMAIN" '$1 == d {f=1} END {exit !f}' /etc/rspamd/dkim_selectors.map 2>/dev/null; then
+if [[ -z "$(dkim_selector "$NEW_DOMAIN")" ]]; then
     echo "${NEW_DOMAIN}    ${DKIM_SELECTOR}" >> /etc/rspamd/dkim_selectors.map
 fi
 ok "DKIM key generated"

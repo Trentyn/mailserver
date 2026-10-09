@@ -1,36 +1,31 @@
 #!/bin/bash
-# Mail Server Setup — Debian 12/13
-# Postfix + Dovecot 2.4 + rspamd (latest) + Let's Encrypt
+# Mail server installer for a clean Debian 12/13 VPS.
+# Postfix + Dovecot CE 2.4 + Rspamd + Let's Encrypt.
 set -euo pipefail
 
-# ── Colors ────────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-
-info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-step()  { echo -e "\n${BOLD}${CYAN}══ $* ${NC}"; }
-ask()   { echo -en "${YELLOW}[?]${NC} $* "; }
-
-[[ $EUID -eq 0 ]] || die "Запусти скрипт от root: sudo bash setup.sh"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/junk.sh
+. "$SCRIPT_DIR/lib/junk.sh"
+# shellcheck source=lib/tls.sh
+. "$SCRIPT_DIR/lib/tls.sh"
+require_root
+
 STATE_DIR=/etc/mailserver
 export DEBIAN_FRONTEND=noninteractive
 APT_OPTS=(-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
-# ── Предварительные проверки ──────────────────────────────────────────────────
-# Установщик рассчитан только на чистый сервер. Если прошлый запуск прервался
-# (например, certbot не смог получить сертификат), его можно безопасно повторить:
-# маркер setup-started отличает нашу незавершённую установку от чужой конфигурации.
+# ── Preflight checks ──────────────────────────────────────────────────────────
+# The installer targets a clean server only. An interrupted run (for example,
+# certbot could not issue the certificate yet) can be repeated safely: the
+# setup-started marker tells our unfinished install apart from foreign config.
 [[ -e "$STATE_DIR/setup-complete" ]] \
-    && die "Почтовый сервер уже установлен. Для обслуживания используй scripts/*.sh."
+    && die "The mail server is already installed. Use the maintenance scripts in scripts/."
 if [[ -e "$STATE_DIR/setup-started" ]]; then
     RESUMING=true
 elif [[ -e /etc/postfix/main.cf || -e /etc/dovecot/local.conf ]]; then
-    die "Сервер уже содержит конфигурацию почты. setup.sh запускают только на чистом Debian; для обслуживания используй scripts/*.sh."
+    die "This server already has a mail configuration. Run setup.sh only on a clean Debian server; use the maintenance scripts in scripts/."
 else
     RESUMING=false
 fi
@@ -38,31 +33,31 @@ fi
 # shellcheck source=/dev/null
 . /etc/os-release
 [[ "${ID:-}" == debian && "${VERSION_CODENAME:-}" =~ ^(bookworm|trixie)$ ]] \
-    || die "Поддерживаются только Debian 12 (bookworm) и Debian 13 (trixie); обнаружено: ${PRETTY_NAME:-unknown}"
+    || die "Only Debian 12 (bookworm) and Debian 13 (trixie) are supported; found: ${PRETTY_NAME:-unknown}"
 CODENAME="$VERSION_CODENAME"
 
 if [[ ! -e "$STATE_DIR/ufw-configured" ]] && command -v ufw >/dev/null \
     && ufw status | grep -q '^Status: active'; then
-    die "UFW уже активен. Чтобы не изменить существующие правила, отключи его или настрой firewall вручную."
+    die "UFW is already active. To avoid changing existing rules, disable it or configure the firewall manually."
 fi
 
 if ss -Hltn 'sport = :80' | grep -q .; then
-    die "Порт 80 занят ($(ss -Hltnp 'sport = :80' | grep -o 'users:(("[^"]*' | cut -d'"' -f2 | sort -u | paste -sd,)). Он нужен certbot для выпуска сертификата."
+    die "Port 80 is in use by $(ss -Hltnp 'sport = :80' | grep -o 'users:(("[^"]*' | cut -d'"' -f2 | sort -u | paste -sd,). Certbot needs it to issue the certificate."
 fi
 
-$RESUMING && warn "Найдена незавершённая установка — продолжаю с начала, уже сделанные шаги будут перезаписаны."
+$RESUMING && warn "Found an unfinished installation. Starting over; completed steps will be rewritten."
 
-# ── Bootstrap: минимум инструментов для запуска скрипта ───────────────────────
-# curl, dig, gpg могут отсутствовать на чистом Debian — ставим сразу
-step "Подготовка"
+# ── Bootstrap ─────────────────────────────────────────────────────────────────
+# curl, dig and gpg can be missing on a minimal Debian image.
+step "Preparing"
 apt-get update -q
 apt-get install "${APT_OPTS[@]}" curl dnsutils gnupg2 ssl-cert
-ok "Базовые утилиты готовы"
+ok "Base tools installed"
 
 DOMAIN_RE='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
 
-# read_val PROMPT DEFAULT [REGEX ERROR]: повторяет вопрос, пока ответ не пройдёт
-# проверку, вместо того чтобы обрывать установку из-за опечатки.
+# read_val PROMPT DEFAULT [REGEX ERROR]: ask again until the answer is valid,
+# so a typo does not abort the installation.
 read_val() {
     local prompt="$1" default="${2:-}" regex="${3:-}" error="${4:-}" val
     while true; do
@@ -71,7 +66,7 @@ read_val() {
         val="${val:-$default}"
         val="${val//[[:space:]]/}"
         if [[ -z "$val" ]]; then
-            warn "Значение не может быть пустым" >&2
+            warn "A value is required" >&2
         elif [[ -n "$regex" && ! "${val,,}" =~ $regex ]]; then
             warn "$error" >&2
         else
@@ -85,82 +80,75 @@ read_secret() {
     local prompt="$1" val confirm
     while true; do
         ask "${prompt}:" >&2; read -rs val; echo
-        [[ -z "$val" ]] && warn "Пароль не может быть пустым" >&2 && continue
-        ask "Повтори пароль:" >&2; read -rs confirm; echo
+        [[ -z "$val" ]] && warn "The password cannot be empty" >&2 && continue
+        ask "Repeat the password:" >&2; read -rs confirm; echo
         [[ "$val" == "$confirm" ]] && break
-        warn "Пароли не совпадают, попробуй снова" >&2
+        warn "The passwords do not match, try again" >&2
     done
     REPLY="$val"
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Сбор параметров"
+step "Settings"
 # ═════════════════════════════════════════════════════════════════════════════
 
 echo
-echo "Тебе понадобится:"
-echo "  • FQDN почтового сервера (например: mx.example.com)"
-echo "  • Домен для почтовых ящиков (например: example.com)"
-echo "  • Email для уведомлений Let's Encrypt"
-echo "  • DNS A-запись для FQDN должна уже указывать на этот сервер"
+echo "You will need:"
+echo "  • the mail server FQDN, for example mx.example.com"
+echo "  • the mailbox domain, for example example.com"
+echo "  • an email address for Let's Encrypt notices"
+echo "  • a DNS A record for the FQDN that already points to this server"
 echo
 
-IPV4_RE='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-SERVER_IP=""
-for url in https://api.ipify.org https://ifconfig.me; do
-    SERVER_IP=$(curl -4fsS --max-time 5 "$url" 2>/dev/null || true)
-    [[ "$SERVER_IP" =~ $IPV4_RE ]] && break
-    SERVER_IP=""
-done
-[[ -n "$SERVER_IP" ]] || SERVER_IP=$(hostname -I | awk '{print $1}')
-info "Публичный IP: ${BOLD}${SERVER_IP}${NC}"
+SERVER_IP=$(public_ipv4)
+info "Public IPv4: ${BOLD}${SERVER_IP}${NC}"
 
-MAIL_HOSTNAME=$(read_val "FQDN почтового сервера (mx.ваш-домен.com)" "" \
-    '^[a-z0-9-]+\.([a-z0-9-]+\.)*[a-z]{2,63}$' "Нужно полное имя хоста, например mx.example.com")
+MAIL_HOSTNAME=$(read_val "Mail server FQDN (mx.your-domain.com)" "" \
+    '^[a-z0-9-]+\.([a-z0-9-]+\.)*[a-z]{2,63}$' "Enter a fully qualified host name, for example mx.example.com")
 MAIL_HOSTNAME="${MAIL_HOSTNAME,,}"
 
 BASE_DOMAIN="${MAIL_HOSTNAME#*.}"
-info "Базовый домен: ${BOLD}${BASE_DOMAIN}${NC}"
+info "Base domain: ${BOLD}${BASE_DOMAIN}${NC}"
 
-MAIL_DOMAIN=$(read_val "Домен для почтовых ящиков (user@???)" "$BASE_DOMAIN" \
-    "$DOMAIN_RE" "Некорректный домен, пример: example.com")
+MAIL_DOMAIN=$(read_val "Mailbox domain (user@???)" "$BASE_DOMAIN" \
+    "$DOMAIN_RE" "Invalid domain, for example: example.com")
 MAIL_DOMAIN="${MAIL_DOMAIN,,}"
-DKIM_SELECTOR=$(read_val "DKIM селектор" "mail$(date +%Y)" \
-    '^[a-z0-9][a-z0-9-]*$' "Селектор может содержать только латиницу, цифры и дефис")
+DKIM_SELECTOR=$(read_val "DKIM selector" "mail$(date +%Y)" \
+    '^[a-z0-9][a-z0-9-]*$' "Use only letters, digits and hyphens")
 DKIM_SELECTOR="${DKIM_SELECTOR,,}"
-LETSENCRYPT_EMAIL=$(read_val "Email для Let's Encrypt уведомлений" "" \
-    '^[^@]+@[^@]+\.[^@]+$' "Некорректный email")
+LETSENCRYPT_EMAIL=$(read_val "Email for Let's Encrypt notices" "" \
+    '^[^@]+@[^@]+\.[^@]+$' "Invalid email address")
 
-# Определяем порт текущей SSH-сессии; на консоли предлагается стандартный 22.
+# Offer the port of the current SSH session; on a console, offer the default 22.
 DETECTED_SSH_PORT=$(awk '{print $4}' <<< "${SSH_CONNECTION:-}" 2>/dev/null || true)
 while true; do
-    SSH_PORT=$(read_val "SSH-порт для UFW (проверь перед подтверждением)" "${DETECTED_SSH_PORT:-22}" \
-        '^[0-9]{1,5}$' "Порт должен быть числом")
+    SSH_PORT=$(read_val "SSH port to allow in UFW (double-check it)" "${DETECTED_SSH_PORT:-22}" \
+        '^[0-9]{1,5}$' "The port must be a number")
     (( SSH_PORT >= 1 && SSH_PORT <= 65535 )) && break
-    warn "Порт должен быть в диапазоне 1–65535"
+    warn "The port must be between 1 and 65535"
 done
 
 echo
-echo -e "${BOLD}Первый почтовый ящик:${NC}"
-FIRST_USER=$(read_val "Имя пользователя (до @)" "info" \
-    '^[a-z0-9._+-]+$' "Допустимы латиница, цифры и символы . _ + -")
+echo -e "${BOLD}First mailbox:${NC}"
+FIRST_USER=$(read_val "User name (before @)" "info" \
+    '^[a-z0-9._+-]+$' "Use only letters, digits and . _ + -")
 FIRST_USER="${FIRST_USER,,}"
 FIRST_EMAIL="${FIRST_USER}@${MAIL_DOMAIN}"
-info "Будет создан ящик: ${BOLD}${FIRST_EMAIL}${NC}"
-info "Адреса postmaster@${MAIL_DOMAIN} и abuse@${MAIL_DOMAIN} будут пересылаться в него"
-read_secret "Пароль для ${FIRST_EMAIL}"
+info "Mailbox to create: ${BOLD}${FIRST_EMAIL}${NC}"
+info "postmaster@${MAIL_DOMAIN} and abuse@${MAIL_DOMAIN} will deliver to it"
+read_secret "Password for ${FIRST_EMAIL}"
 FIRST_PASS="$REPLY"
 
-MAILBOX_QUOTA=$(read_val "Квота каждого ящика (например 5G)" "5G" \
-    '^[1-9][0-9]*[kmgt]$' "Укажи положительный размер, например 5G, 10G или 500M")
+MAILBOX_QUOTA=$(read_val "Storage quota per mailbox (for example 5G)" "5G" \
+    '^[1-9][0-9]*[kmgt]$' "Enter a positive size such as 5G, 10G or 500M")
 MAILBOX_QUOTA="${MAILBOX_QUOTA^^}"
 
-MAIL_RETENTION_DAYS=$(read_val "Сколько дней хранить Bin/Trash и Junk (0 — отключить автоочистку)" "30" \
-    '^[0-9]+$' "Укажи количество дней: 0 или положительное целое число")
+MAIL_RETENTION_DAYS=$(read_val "Days to keep Trash and Junk mail (0 disables cleanup)" "30" \
+    '^[0-9]+$' "Enter 0 or a positive number of days")
 MAIL_RETENTION_DAYS=$((10#$MAIL_RETENTION_DAYS))
 
 echo
-echo -e "${BOLD}Параметры:${NC}"
+echo -e "${BOLD}Summary:${NC}"
 echo "  MAIL_HOSTNAME : $MAIL_HOSTNAME"
 echo "  BASE_DOMAIN   : $BASE_DOMAIN"
 echo "  MAIL_DOMAIN   : $MAIL_DOMAIN"
@@ -170,63 +158,62 @@ echo "  FIRST_EMAIL   : $FIRST_EMAIL"
 echo "  MAILBOX_QUOTA : $MAILBOX_QUOTA"
 echo "  MAIL_RETENTION_DAYS : $MAIL_RETENTION_DAYS"
 echo
-ask "Всё верно? Начать установку? [y/N]:"
+ask "Start the installation? [y/N]:"
 read -r confirm
-[[ "${confirm,,}" == "y" ]] || { info "Отменено."; exit 0; }
+[[ "${confirm,,}" == "y" ]] || { info "Cancelled."; exit 0; }
 
 install -d -m 0755 "$STATE_DIR"
 touch "$STATE_DIR/setup-started"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Проверка DNS"
+step "DNS check"
 # ═════════════════════════════════════════════════════════════════════════════
 
-# certbot всё равно не выпустит сертификат без A-записи, поэтому вместо
-# обрыва установки ждём, пока DNS обновится.
+# Certbot cannot issue a certificate without the A record, so wait for DNS
+# instead of aborting the installation.
 while true; do
-    info "Проверяю A-запись для ${MAIL_HOSTNAME}..."
+    info "Looking up the A record for ${MAIL_HOSTNAME}..."
     RESOLVED=$(dig +short A "$MAIL_HOSTNAME" @8.8.8.8 2>/dev/null | tail -1 || true)
     [[ -n "$RESOLVED" ]] || RESOLVED=$(dig +short A "$MAIL_HOSTNAME" 2>/dev/null | tail -1 || true)
     if [[ "$RESOLVED" == "$SERVER_IP" ]]; then
         ok "DNS ${MAIL_HOSTNAME} → ${SERVER_IP} ✓"
         break
     fi
-    warn "DNS для ${MAIL_HOSTNAME} → '${RESOLVED:-не найдено}', ожидается '${SERVER_IP}'"
+    warn "${MAIL_HOSTNAME} resolves to '${RESOLVED:-nothing}', expected '${SERVER_IP}'"
     echo
-    echo "Добавь A-запись в DNS:"
+    echo "Add this A record at your DNS provider:"
     echo "  ${MAIL_HOSTNAME}    A    ${SERVER_IP}"
     echo
-    ask "Enter — проверить снова, skip — продолжить без проверки, q — выйти:"
+    ask "Press Enter to check again, type skip to continue anyway, or q to quit:"
     read -r dns_choice
     case "${dns_choice,,}" in
-        skip) warn "DNS не подтверждён — certbot может не выпустить сертификат"; break ;;
-        q) die "Настрой DNS и запусти скрипт снова." ;;
+        skip) warn "DNS is not confirmed; certbot may fail to issue the certificate"; break ;;
+        q) die "Configure DNS and run setup.sh again." ;;
     esac
 done
 
-# Без исходящего 25-го порта сервер сможет принимать почту, но не отправлять её.
+# Without outbound port 25 the server can receive mail but cannot deliver it.
 if timeout 7 bash -c 'exec 3<>/dev/tcp/gmail-smtp-in.l.google.com/25' 2>/dev/null; then
-    ok "Исходящий порт 25 открыт"
+    ok "Outbound port 25 is open"
 else
-    warn "Исходящий порт 25 недоступен. Письма на внешние адреса не будут уходить,"
-    warn "пока хостер не разблокирует порт 25 (обычно — через тикет в поддержку)."
+    warn "Outbound port 25 is blocked. Mail to external addresses will not leave the"
+    warn "server until the provider unblocks port 25 (usually through a support ticket)."
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Подготовка репозиториев"
+step "Package repositories"
 # ═════════════════════════════════════════════════════════════════════════════
 
-# Rspamd: официальный production-репозиторий. Debian-пакет заметно отстаёт
-# и не поддерживается upstream-проектом.
+# Rspamd: the official stable repository. The Debian package lags behind and
+# is not supported by the upstream project.
 install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://rspamd.com/apt-stable/gpg.key \
     | gpg --dearmor --yes -o /etc/apt/keyrings/rspamd.gpg
 echo "deb [signed-by=/etc/apt/keyrings/rspamd.gpg] https://rspamd.com/apt-stable/ ${CODENAME} main" \
     > /etc/apt/sources.list.d/rspamd.list
-info "Подключён официальный production-репозиторий Rspamd"
+info "Added the official Rspamd repository"
 
-# Dovecot CE 2.4 latest: официальный репозиторий upstream.
-# Он поддерживает актуальную стабильную ветку Dovecot 2.4 для Debian.
+# Dovecot CE 2.4: the official upstream repository with the current 2.4 release.
 curl -fsSL https://repo.dovecot.org/DOVECOT-REPO-GPG-2.4 \
     | gpg --dearmor --yes -o /etc/apt/keyrings/dovecot.gpg
 cat > /etc/apt/sources.list.d/dovecot.sources << EOF
@@ -236,17 +223,17 @@ Suites: ${CODENAME}
 Components: main
 Signed-By: /etc/apt/keyrings/dovecot.gpg
 EOF
-info "Подключён официальный репозиторий Dovecot CE 2.4 latest"
+info "Added the official Dovecot CE 2.4 repository"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Установка пакетов"
+step "Packages"
 # ═════════════════════════════════════════════════════════════════════════════
 
-# Предварительно настроить postfix через debconf чтобы apt не спрашивал
+# Preseed debconf so the Postfix package does not ask questions.
 echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections
 echo "postfix postfix/mailname string ${MAIL_HOSTNAME}" | debconf-set-selections
 
-# Обновить базовую систему до актуальных Debian security/stable-пакетов.
+# Bring the base system up to date with Debian security and stable updates.
 apt-get update -q
 apt-get upgrade "${APT_OPTS[@]}"
 apt-get install "${APT_OPTS[@]}" \
@@ -259,21 +246,21 @@ apt-get install "${APT_OPTS[@]}" \
     rsyslog \
     dnsutils curl wget gnupg2 swaks openssl ufw git
 
-ok "Все пакеты установлены"
-info "Версии:"
+ok "Packages installed"
+info "Versions:"
 echo "  postfix:  $(postconf -h mail_version 2>/dev/null || echo 'n/a')"
 echo "  dovecot:  $(dovecot --version 2>/dev/null | head -1 || echo 'n/a')"
 echo "  rspamd:   $(rspamd --version 2>/dev/null | head -1 || echo 'n/a')"
 echo "  certbot:  $(certbot --version 2>/dev/null || echo 'n/a')"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Настройка системы"
+step "System"
 # ═════════════════════════════════════════════════════════════════════════════
 
 hostnamectl set-hostname "$MAIL_HOSTNAME"
 
 if [[ -f /etc/cloud/templates/hosts.debian.tmpl ]]; then
-    info "Cloud-init обнаружен — hostname подставится в /etc/hosts автоматически"
+    info "cloud-init detected; it maintains /etc/hosts"
 else
     if ! grep -q "$MAIL_HOSTNAME" /etc/hosts; then
         echo "127.0.1.1   $MAIL_HOSTNAME ${MAIL_HOSTNAME%%.*}" >> /etc/hosts
@@ -281,9 +268,9 @@ else
 fi
 ok "Hostname: $(hostname)"
 
-# Shell-окружение: общий файл подключается одной строкой из ~/.bashrc root и
-# пользователя, который запустил установку. Стандартный Debian .bashrc не
-# перезаписывается; чтобы отключить, удали строку с пометкой "# mailserver".
+# Shell environment: one shared file, sourced by a single line in ~/.bashrc of
+# root and of the user who ran the installer. The stock Debian .bashrc is kept;
+# delete the line marked "# mailserver" to opt out.
 cat > "$STATE_DIR/bashrc" << 'BASHRC'
 # Managed by mailserver setup.sh. Sourced from ~/.bashrc.
 [[ $- == *i* ]] || return
@@ -336,55 +323,47 @@ for shell_user in root ${TARGET_USER:+"$TARGET_USER"}; do
     fi
     grep -Fqx "$BASHRC_LINE" "$shell_home/.bashrc" \
         || printf '\n%s\n' "$BASHRC_LINE" >> "$shell_home/.bashrc"
-    ok "Shell-окружение подключено для ${shell_user}"
+    ok "Shell environment enabled for ${shell_user}"
 done
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "TLS сертификат"
+step "TLS certificate"
 # ═════════════════════════════════════════════════════════════════════════════
 
-info "Запрашиваю сертификат для ${MAIL_HOSTNAME}..."
-# Сертификат выпускается до записи конфигов Postfix/Dovecot, которые на него
-# ссылаются: если certbot упадёт, установку можно просто запустить снова.
+info "Requesting a certificate for ${MAIL_HOSTNAME}..."
+# The certificate is issued before the Postfix and Dovecot configs that point
+# to it are written, so a certbot failure leaves a state setup.sh can resume.
 if [[ -f "/etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem" ]]; then
-    info "Сертификат уже существует — пропускаю выпуск"
+    info "The certificate already exists; skipping issuance"
 elif ! CERTBOT_OUT=$(certbot certonly --standalone \
         -d "$MAIL_HOSTNAME" \
         --email "$LETSENCRYPT_EMAIL" \
         --agree-tos \
         --non-interactive 2>&1); then
     echo "$CERTBOT_OUT" | sed 's/^/  /'
-    die "Сертификат не получен. Проверь A-запись ${MAIL_HOSTNAME} → ${SERVER_IP} и доступность порта 80, затем запусти setup.sh снова."
+    die "No certificate was issued. Check that ${MAIL_HOSTNAME} resolves to ${SERVER_IP} and port 80 is reachable, then run setup.sh again."
 fi
 
 chown root:dovecot "/etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
 chmod 640 "/etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
-ok "TLS сертификат получен"
+ok "TLS certificate is in place"
 
-# Deploy hook: фиксирует права и перезагружает сервисы при автообновлении
-mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-cat > /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh << 'EOF'
-#!/bin/bash
-for d in /etc/letsencrypt/live/*/privkey.pem; do
-    chown root:dovecot "$d"
-    chmod 640 "$d"
-done
-systemctl reload postfix dovecot rspamd
-EOF
-chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
+# Renewal opens port 80 only while certbot runs, then reloads the mail services.
+install_certbot_hooks
+ok "Renewal hooks installed; port 80 opens only during renewal"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Создание пользователя vmail"
+step "vmail user"
 # ═════════════════════════════════════════════════════════════════════════════
 
 getent group vmail &>/dev/null  || groupadd -g 5000 vmail
 getent passwd vmail &>/dev/null || useradd -u 5000 -g vmail -d /var/mail/vhosts -s /sbin/nologin vmail
 mkdir -p /var/mail/vhosts
 chown vmail:vmail /var/mail/vhosts
-ok "vmail готов"
+ok "vmail user ready"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Настройка Postfix"
+step "Postfix"
 # ═════════════════════════════════════════════════════════════════════════════
 
 cat > /etc/postfix/main.cf << EOF
@@ -399,12 +378,12 @@ inet_interfaces = all
 inet_protocols = ipv4
 mynetworks = 127.0.0.0/8
 
-# Локальная доставка отключена — только виртуальные ящики
+# Local delivery is disabled: virtual mailboxes only
 mydestination =
 local_recipient_maps =
 local_transport = error:local mail delivery is disabled
 
-# Виртуальные домены
+# Virtual domains
 virtual_mailbox_domains = ${MAIL_DOMAIN}
 virtual_mailbox_base = /var/mail/vhosts
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
@@ -415,7 +394,7 @@ virtual_uid_maps = static:5000
 virtual_gid_maps = static:5000
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 
-# SASL через Dovecot
+# SASL through Dovecot
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
@@ -435,7 +414,7 @@ smtpd_client_connection_rate_limit = 50
 # Header filtering
 header_checks = pcre:/etc/postfix/header_checks_pcre
 
-# TLS входящие
+# Inbound TLS
 smtpd_tls_cert_file = /etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem
 smtpd_tls_key_file = /etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem
 smtpd_tls_security_level = may
@@ -444,7 +423,7 @@ smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtpd_tls_loglevel = 1
 smtpd_tls_received_header = yes
 
-# TLS исходящие
+# Outbound TLS
 smtp_tls_security_level = may
 smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtp_tls_loglevel = 1
@@ -476,21 +455,21 @@ cat > /etc/postfix/header_checks_pcre << 'EOF'
 /^X-Originating-IP:/    IGNORE
 EOF
 
-# Первый ящик
+# First mailbox
 printf '%s\t%s/%s/\n' "$FIRST_EMAIL" "$MAIL_DOMAIN" "$FIRST_USER" > /etc/postfix/vmailbox
 postmap /etc/postfix/vmailbox
 printf '%s\t%s\n' "$FIRST_EMAIL" "$FIRST_EMAIL" > /etc/postfix/sender_login_maps
 postmap /etc/postfix/sender_login_maps
-# RFC 5321 требует рабочий postmaster@; туда же приходят отчёты DMARC.
+# RFC 5321 requires a working postmaster@; it also receives DMARC reports.
 {
     printf 'postmaster@%s\t%s\n' "$MAIL_DOMAIN" "$FIRST_EMAIL"
     printf 'abuse@%s\t%s\n' "$MAIL_DOMAIN" "$FIRST_EMAIL"
 } > /etc/postfix/virtual
 postmap /etc/postfix/virtual
 
-# submission (587) и smtps (465) в master.cf
-# Комментируем существующие незакомментированные строки чтобы не было дублей.
-# Только при первом проходе: иначе повторный запуск закомментирует наш же блок.
+# submission (587) and smtps (465) in master.cf. Comment out the stock entries
+# to avoid duplicates, but only on the first pass: a resumed run would
+# otherwise comment out our own block.
 if ! grep -q '# mailserver-setup: ports' /etc/postfix/master.cf; then
 sed -i 's/^submission /#submission /' /etc/postfix/master.cf
 sed -i 's/^smtps /#smtps /'         /etc/postfix/master.cf
@@ -520,17 +499,17 @@ smtps     inet  n       -       y       -       -       smtpd
 EOF
 fi
 
-ok "Postfix настроен"
+ok "Postfix configured"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Настройка Dovecot"
+step "Dovecot"
 # ═════════════════════════════════════════════════════════════════════════════
 
 cat > /etc/dovecot/local.conf << EOF
 # ${MAIL_HOSTNAME}
 protocols = imap pop3 lmtp
 
-# Хранилище (Dovecot 2.4)
+# Storage (Dovecot 2.4)
 mail_driver = maildir
 mail_home = /var/mail/vhosts/%{user|domain}/%{user|username}
 mail_path = /var/mail/vhosts/%{user|domain}/%{user|username}
@@ -667,8 +646,7 @@ service lmtp {
 }
 EOF
 
-# Пакет из официального репозитория может не включать local.conf по умолчанию.
-# Подключаем его явно, не дублируя строку при повторном запуске.
+# The upstream package may not include local.conf by default.
 if ! grep -Fxq "!include_try local.conf" /etc/dovecot/dovecot.conf; then
     printf "\\n!include_try local.conf\\n" >> /etc/dovecot/dovecot.conf
 fi
@@ -677,8 +655,8 @@ touch /etc/dovecot/users
 chown root:dovecot /etc/dovecot/users
 chmod 640 /etc/dovecot/users
 
-# Отключить системную аутентификацию: почтовые ящики берутся из passwd-file.
-# Dovecot 2.4 (Debian 13) задаёт эти блоки напрямую; старые версии — include.
+# Disable system (PAM) authentication: mailboxes come from the passwd-file.
+# Dovecot 2.4 defines these blocks inline; older configs use an include.
 if [[ -f /etc/dovecot/conf.d/10-auth.conf ]]; then
     sed -Ei '/^[[:space:]]*passdb[[:space:]]+pam[[:space:]]*\{/,/^[[:space:]]*\}[[:space:]]*$/ s/^/#/' \
         /etc/dovecot/conf.d/10-auth.conf
@@ -688,41 +666,23 @@ if [[ -f /etc/dovecot/conf.d/10-auth.conf ]]; then
         /etc/dovecot/conf.d/10-auth.conf
 
     if doveconf -n | grep -Eq '^[[:space:]]*(passdb pam|userdb passwd)'; then
-        die "Не удалось отключить системную PAM-аутентификацию Dovecot"
+        die "Could not disable Dovecot PAM authentication"
     fi
     if doveconf -n | grep -Eq '^mail_inbox_path = /var/mail/'; then
-        die "Dovecot использует системный путь INBOX вместо virtual Maildir"
+        die "Dovecot uses the system INBOX path instead of the virtual Maildir"
     fi
 fi
 
-ok "Dovecot настроен"
+ok "Dovecot configured"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Настройка rspamd"
+step "Rspamd"
 # ═════════════════════════════════════════════════════════════════════════════
 
 mkdir -p /etc/rspamd/local.d
 
-# Redis backs Rspamd's Bayes statistics and IMAPSieve user training.
-cat > /etc/rspamd/local.d/redis.conf << 'EOF'
-servers = "127.0.0.1:6379";
-EOF
-cat > /etc/rspamd/local.d/options.inc <<'EOF'
-task_timeout = 10s;
-EOF
-
-cat > /etc/rspamd/local.d/milter_headers.conf << 'EOF'
-# Mark only messages Rspamd classifies as spam. Dovecot's global Sieve rule
-# consumes this marker and files the message into Junk.
-use = ["spam-header"];
-routines {
-  spam-header {
-    header = "X-Rspamd-Deliver-To";
-    value = "Junk";
-    remove = 0;
-  }
-}
-EOF
+# Redis-backed Bayes and the spam marker that files mail into Junk.
+write_rspamd_junk_config
 
 cat > /etc/rspamd/local.d/worker-proxy.inc << 'EOF'
 milter = yes;
@@ -749,7 +709,7 @@ enabled = false;
 EOF
 
 mkdir -p /var/lib/rspamd/dkim
-# При повторном запуске после сбоя ключ не пересоздаётся.
+# A resumed run keeps the existing key.
 if [[ ! -s "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.pub" ]]; then
     rspamadm dkim_keygen \
         -b 2048 \
@@ -765,50 +725,16 @@ chmod 440 "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.key"
 
 echo "${MAIL_DOMAIN}    ${DKIM_SELECTOR}" > /etc/rspamd/dkim_selectors.map
 
-rspamadm configtest && ok "rspamd настроен"
+rspamadm configtest && ok "Rspamd configured"
 
-install -d -o root -g vmail -m 0750 /etc/dovecot/sieve /usr/lib/dovecot/sieve
-cat > /etc/dovecot/sieve/spam-to-junk.sieve <<'EOF'
-require ["fileinto", "mailbox"];
+install_junk_sieve_rules
+ok "Junk delivery and spam training rules installed"
 
-if header :is "X-Rspamd-Deliver-To" "Junk" {
-    fileinto :create "Junk";
-    stop;
-}
-EOF
-cat > /etc/dovecot/sieve/learn-spam.sieve <<'EOF'
-require ["vnd.dovecot.pipe", "copy"];
-pipe :copy "rspamd-learn-spam";
-EOF
-cat > /etc/dovecot/sieve/learn-ham.sieve <<'EOF'
-require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment"];
-
-# Deleting spam is not a ham report.
-if environment :is "imap.mailbox" "Trash" {
-    stop;
-}
-pipe :copy "rspamd-learn-ham";
-EOF
-cat > /usr/lib/dovecot/sieve/rspamd-learn-spam <<'EOF'
-#!/bin/sh
-exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_spam
-EOF
-cat > /usr/lib/dovecot/sieve/rspamd-learn-ham <<'EOF'
-#!/bin/sh
-exec /usr/bin/rspamc -h 127.0.0.1:11334 learn_ham
-EOF
-sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/spam-to-junk.sieve
-sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/learn-spam.sieve
-sievec -c /etc/dovecot/dovecot.conf /etc/dovecot/sieve/learn-ham.sieve
-chown root:vmail /etc/dovecot/sieve/* /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
-chmod 0640 /etc/dovecot/sieve/*.sieve /etc/dovecot/sieve/*.svbin
-chmod 0750 /usr/lib/dovecot/sieve/rspamd-learn-spam /usr/lib/dovecot/sieve/rspamd-learn-ham
-
-# Проверяем итоговый конфиг Postfix
+# Final Postfix configuration check
 if postfix check 2>&1; then
-    ok "Postfix конфиг валиден"
+    ok "Postfix configuration is valid"
 else
-    warn "Postfix check выдал предупреждения — смотри вывод выше"
+    warn "postfix check reported warnings; see the output above"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -837,7 +763,7 @@ port     = imap,imaps,pop3,pop3s
 logpath  = /var/log/dovecot.log
 maxretry = 5
 EOF
-# Dovecot пишет в собственный лог — без ротации он растёт бесконечно.
+# Dovecot writes its own log file, which grows forever without rotation.
 if ! grep -rqs '/var/log/dovecot.log' /etc/logrotate.d/; then
     cat > /etc/logrotate.d/mailserver-dovecot << 'EOF'
 /var/log/dovecot.log {
@@ -853,12 +779,12 @@ if ! grep -rqs '/var/log/dovecot.log' /etc/logrotate.d/; then
 }
 EOF
 fi
-# fail2ban не запускается, если указанного logpath ещё нет.
+# fail2ban refuses to start when a jail logpath does not exist yet.
 touch /var/log/mail.log /var/log/dovecot.log
-ok "fail2ban настроен"
+ok "fail2ban configured"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Первый почтовый ящик"
+step "First mailbox"
 # ═════════════════════════════════════════════════════════════════════════════
 
 HASH=$(doveadm pw -s SHA512-CRYPT -p "$FIRST_PASS")
@@ -867,10 +793,10 @@ echo "${FIRST_EMAIL}:${HASH}" > /etc/dovecot/users
 mkdir -p "/var/mail/vhosts/${MAIL_DOMAIN}/${FIRST_USER}"/{cur,new,tmp}
 chown -R vmail:vmail "/var/mail/vhosts/${MAIL_DOMAIN}"
 chmod -R 700 "/var/mail/vhosts/${MAIL_DOMAIN}"
-ok "Ящик ${FIRST_EMAIL} создан"
+ok "Mailbox ${FIRST_EMAIL} created"
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Запуск сервисов"
+step "Services"
 # ═════════════════════════════════════════════════════════════════════════════
 
 systemctl enable --now redis-server
@@ -879,9 +805,9 @@ systemctl enable --now postfix
 systemctl enable --now dovecot
 systemctl enable --now fail2ban
 
-# Пакеты могли стартовать с конфигурацией по умолчанию до записи main.cf/local.conf
-# и jail.local. Перезапуск применяет новые параметры, включая inet_protocols и Dovecot 2.4;
-# fail2ban перезапускается последним, когда логи сервисов уже существуют.
+# The packages started with default settings before main.cf, local.conf and
+# jail.local were written; restart to apply them. fail2ban goes last, once the
+# service logs exist.
 systemctl restart rsyslog postfix dovecot rspamd
 systemctl restart fail2ban
 
@@ -891,32 +817,31 @@ for svc in postfix dovecot rspamd redis-server fail2ban; do
     if systemctl is-active --quiet "$svc"; then
         ok "$svc"
     else
-        warn "$svc НЕ запущен — проверь: journalctl -u $svc -n 30"
+        warn "$svc is NOT running; check: journalctl -u $svc -n 30"
     fi
 done
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "Проверка аутентификации"
+step "Authentication check"
 # ═════════════════════════════════════════════════════════════════════════════
 
 sleep 1
 AUTH_RESULT=$(doveadm auth test "$FIRST_EMAIL" "$FIRST_PASS" 2>&1 || true)
 if echo "$AUTH_RESULT" | grep -q "auth succeeded"; then
-    ok "Аутентификация ${FIRST_EMAIL} ✓"
+    ok "Authentication for ${FIRST_EMAIL} ✓"
 else
-    warn "Аутентификация не прошла. Проверь: doveadm auth test '${FIRST_EMAIL}' 'пароль'"
+    warn "Authentication failed. Check: doveadm auth test '${FIRST_EMAIL}' 'password'"
     echo "$AUTH_RESULT" | sed 's/^/  /'
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# ═════════════════════════════════════════════════════════════════════════════
-step "Настройка UFW с защитой от потери SSH"
+step "Firewall (UFW) with SSH lockout protection"
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [[ -e "$STATE_DIR/ufw-configured" ]]; then
-    info "UFW уже настроен прошлым запуском — пропускаю"
+    info "UFW was configured by a previous run; skipping"
 else
-    # Аварийный откат отключит UFW через 3 минуты, если новый SSH-вход не проверен.
+    # An emergency rollback disables UFW after 3 minutes unless SSH is confirmed.
     UFW_ROLLBACK_UNIT="mailserver-ufw-rollback"
     cat > "/run/systemd/system/${UFW_ROLLBACK_UNIT}.service" <<'EOF'
 [Unit]
@@ -940,12 +865,11 @@ EOF
     systemctl daemon-reload
     systemctl start "${UFW_ROLLBACK_UNIT}.timer"
     systemctl is-active --quiet "${UFW_ROLLBACK_UNIT}.timer" \
-        || die "Не удалось запланировать безопасный откат UFW"
+        || die "Could not schedule the UFW rollback"
     ufw default deny incoming
     ufw default allow outgoing
     ufw allow "${SSH_PORT}/tcp" comment 'SSH verified port'
     ufw allow 25/tcp comment 'SMTP'
-    ufw allow 80/tcp comment 'HTTP Lets Encrypt'
     ufw allow 110/tcp comment 'POP3'
     ufw allow 143/tcp comment 'IMAP STARTTLS'
     ufw allow 465/tcp comment 'SMTPS'
@@ -962,12 +886,12 @@ Open a NEW terminal now and verify SSH before continuing:
 
 Only after that new login succeeds, type: SSH-OK
 EOF
-    # Опечатка не должна обрывать установку: спрашиваем, пока откат не отключил UFW.
-    # Таймер после срабатывания остаётся «active (elapsed)», поэтому смотрим на сам UFW.
+    # A typo must not abort setup: keep asking until the rollback disables UFW.
+    # A fired timer stays "active (elapsed)", so check UFW itself.
     UFW_CONFIRM=""
     while ufw status | grep -q '^Status: active'; do
         ask "Confirmation:"
-        # Тайм-аут, чтобы заметить сработавший откат, даже если никто не ответил.
+        # Time out to notice a fired rollback even when nobody answers.
         read -r -t 200 UFW_CONFIRM || true
         [[ "$UFW_CONFIRM" == 'SSH-OK' ]] && break
         warn "Type exactly SSH-OK after the new SSH login works."
@@ -985,20 +909,20 @@ EOF
 fi
 
 if (( MAIL_RETENTION_DAYS > 0 )); then
-    step "Автоочистка Bin/Trash и Junk"
+    step "Trash and Junk cleanup"
     bash "$SCRIPT_DIR/install-mail-cleanup-timer.sh" "$MAIL_RETENTION_DAYS"
-    ok "Bin/Trash и Junk будут очищаться через $MAIL_RETENTION_DAYS дней"
+    ok "Trash and Junk messages are removed after $MAIL_RETENTION_DAYS days"
 else
-    info "Автоочистка Bin/Trash отключена"
+    info "Trash and Junk cleanup is disabled"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-step "DNS записи — добавь в панели управления доменом"
+step "DNS records to add at your DNS provider"
 # ═════════════════════════════════════════════════════════════════════════════
 
 echo
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║         DNS ЗАПИСИ ДЛЯ: ${MAIL_DOMAIN}${NC}"
+echo -e "${BOLD}║         DNS RECORDS FOR: ${MAIL_DOMAIN}${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
 echo
 echo -e "${CYAN}── A ────────────────────────────────────────────────────────${NC}"
@@ -1011,22 +935,22 @@ echo -e "${CYAN}── SPF ─────────────────�
 printf "  %-40s  TXT    %s\n" "${MAIL_DOMAIN}." '"v=spf1 mx ~all"'
 echo
 echo -e "${CYAN}── DKIM ─────────────────────────────────────────────────────${NC}"
-printf "  Имя:   %s\n"   "${DKIM_SELECTOR}._domainkey.${MAIL_DOMAIN}."
-printf "  Тип:   TXT\n"
-echo   "  Значение:"
+printf "  Name:   %s\n"   "${DKIM_SELECTOR}._domainkey.${MAIL_DOMAIN}."
+printf "  Type:   TXT\n"
+echo   "  Value:"
 grep -oE '"[^"]*"' "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.pub" | tr -d '"\n'; echo
 echo
 echo -e "${CYAN}── DMARC ────────────────────────────────────────────────────${NC}"
 printf "  %-40s  TXT    %s\n" "_dmarc.${MAIL_DOMAIN}." \
     "\"v=DMARC1; p=quarantine; rua=mailto:postmaster@${MAIL_DOMAIN}\""
 echo
-echo -e "${CYAN}── PTR (у хостера, не в DNS домена) ────────────────────────${NC}"
+echo -e "${CYAN}── PTR (set at the VPS provider, not in the domain DNS) ─────${NC}"
 printf "  %-40s  PTR    %s\n" "${SERVER_IP}" "${MAIL_HOSTNAME}."
 echo
-echo -e "${YELLOW}Проверить DKIM после распространения DNS: https://mxtoolbox.com/dkim.aspx${NC}"
+echo -e "${YELLOW}After DNS propagates, run: sudo bash ${SCRIPT_DIR}/verify-mailserver.sh${NC}"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Сводка содержит пароль первого ящика, поэтому остаётся только у root.
+# The summary contains the first mailbox password, so only root can read it.
 SETUP_SUMMARY="/root/mailserver-setup-${MAIL_DOMAIN}-$(date +%Y%m%d-%H%M%S).txt"
 DKIM_DNS_VALUE=$(grep -oE '"[^"]*"' "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.pub" | tr -d '"\n')
 umask 077
@@ -1065,31 +989,29 @@ NEXT STEPS
 4. Store this password in a password manager, then securely delete this file.
 EOF
 chmod 600 "$SETUP_SUMMARY"
-ok "Создан защищённый итоговый файл: ${SETUP_SUMMARY}"
+ok "Root-only setup summary: ${SETUP_SUMMARY}"
 touch "$STATE_DIR/setup-complete"
 
-step "Установка завершена!"
+step "Installation complete"
 # ═════════════════════════════════════════════════════════════════════════════
 
 echo
-echo -e "${GREEN}${BOLD}Сервер готов!${NC}"
+echo -e "${GREEN}${BOLD}The mail server is ready.${NC}"
 echo
-echo "  Ящик  : ${FIRST_EMAIL}"
-echo "  IMAP  : ${MAIL_HOSTNAME}:993  (SSL/TLS)"
-echo "  SMTP  : ${MAIL_HOSTNAME}:587  (STARTTLS)"
+echo "  Mailbox: ${FIRST_EMAIL}"
+echo "  IMAP   : ${MAIL_HOSTNAME}:993  (SSL/TLS)"
+echo "  SMTP   : ${MAIL_HOSTNAME}:587  (STARTTLS)"
 echo
-echo "  Добавить домен : bash ${SCRIPT_DIR}/add-domain.sh"
-echo "  Добавить ящик  : bash ${SCRIPT_DIR}/add-mailbox.sh"
-echo "  Статус         : bash ${SCRIPT_DIR}/status.sh"
+echo "  Add a domain  : sudo bash ${SCRIPT_DIR}/add-domain.sh"
+echo "  Add a mailbox : sudo bash ${SCRIPT_DIR}/add-mailbox.sh"
+echo "  Status        : sudo bash ${SCRIPT_DIR}/status.sh"
 echo
-echo -e "${YELLOW}${BOLD}⚠  ВАЖНО — порт 25 (SMTP):${NC}"
-echo "   Многие VPS-провайдеры блокируют исходящий порт 25 по умолчанию."
-echo "   Если письма не доходят до внешних адресатов — обратись в поддержку"
-echo "   хостера и попроси разблокировать порт 25 для твоего сервера."
-echo "   Провайдеры у которых это точно нужно делать:"
-echo "   Hetzner, DigitalOcean, Vultr, Linode, AWS, GCP, Azure"
+echo -e "${YELLOW}${BOLD}⚠  Outbound port 25 (SMTP):${NC}"
+echo "   Many VPS providers block outbound port 25 by default. If mail does not"
+echo "   reach external recipients, ask the provider to unblock port 25."
+echo "   Hetzner, DigitalOcean, Vultr, Linode, AWS, GCP and Azure all require this."
 echo
-echo "Логи:"
+echo "Logs:"
 echo "  journalctl -u postfix -f"
-echo "  journalctl -u dovecot -f"
+echo "  tail -f /var/log/dovecot.log"
 echo "  tail -f /var/log/rspamd/rspamd.log"
