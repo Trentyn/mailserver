@@ -21,7 +21,15 @@ match the planning list, so done items leave gaps.
 - [ ] **10. ManageSieve (port 4190).** User filters and vacation replies,
   usable from SnappyMail.
 - [ ] **11. Mail client autoconfiguration.** Thunderbird autoconfig, Outlook
-  autodiscover, iOS profile.
+  autodiscover, iOS profile. Plan:
+  - print SRV records (`_imaps._tcp`, `_submissions._tcp`, `_submission._tcp`)
+    in `setup.sh` and `add-domain.sh`;
+  - a script that generates `config-v1.1.xml` (Thunderbird), `autodiscover.xml`
+    (Outlook) and a `.mobileconfig` profile (iOS/macOS) for each domain;
+  - undecided: where to serve them from (`autoconfig.<domain>`,
+    `autodiscover.<domain>`). Serving from the mail server needs port 443 open
+    permanently. The alternative is another web server, for example the home
+    server behind the Cloudflare Tunnel.
 - [ ] **12. Per-mailbox quota.** The quota is currently one value for all
   mailboxes.
 
@@ -44,6 +52,23 @@ match the planning list, so done items leave gaps.
   `.vbs`, `.bat`, `.cmd`, `.ps1`, `.lnk`, `.iso`, macro-enabled Office files),
   also inside archives and with double extensions. Document ClamAV as an option
   for servers with 4 GB of RAM or more.
+
+## Webmail on another server
+
+- [ ] **23. WireGuard tunnel between the webmail server and the mail server.**
+  The webmail server gets a fixed tunnel address for `trusted-client.sh`
+  instead of a DDNS hostname. IMAP and SMTP traffic from webmail then stays off
+  the public internet, and the mail server no longer sees the home IP.
+- [ ] **24. Protect the webmail login at Cloudflare.** The mail server no longer
+  bans the webmail server's IP, so password guessing through the webmail login
+  must be stopped in front of it: a Cloudflare rate-limiting rule for the login
+  request, or Cloudflare Access. Document it in `operations.md`.
+
+## Platform
+
+- [ ] **22. Recommend Debian 13.** State "Debian 13 recommended" in the README
+  and `setup.md`, and print a non-blocking warning when `setup.sh` runs on
+  Debian 12. CI tests only Debian 13; Debian 12 is tested locally.
 
 ## Code structure
 
