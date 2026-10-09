@@ -1,13 +1,13 @@
 # Installation Guide
 
-Install only on a clean Debian 12 or Debian 13 VPS. If setup stops part-way, fix the reported problem and run it again; it resumes. A completed installation is never reinstalled over.
+Install only on a clean Debian 12 or 13 VPS. If setup stops part-way, fix the reported problem and run it again; it resumes. A completed installation is never reinstalled over.
 
 ## Before you start
 
-1. Create an A record for the chosen mail hostname, for example `mx.example.com`, pointing to the VPS IPv4 address.
+1. Create an A record for the mail hostname, for example `mx.example.com`, pointing to the VPS IPv4 address.
 2. Ensure the provider permits outbound TCP port 25 (setup warns if it is blocked).
-3. Make sure nothing listens on port 80; certbot needs it to issue the certificate. After setup the firewall keeps port 80 closed except during certificate renewal.
-4. Connect to the VPS using SSH and clone this repository.
+3. Make sure nothing listens on port 80; certbot needs it to issue the certificate.
+4. Connect to the VPS over SSH and clone this repository.
 
 ```bash
 sudo apt update && sudo apt install -y git
@@ -16,18 +16,32 @@ cd mailserver
 sudo bash scripts/setup.sh
 ```
 
-The installer asks for the FQDN, mail domain, DKIM selector, Let's Encrypt email, SSH port, first mailbox, mailbox quota, and Trash/Junk retention. If the A record does not resolve yet, it waits and lets you re-check instead of failing. It creates a root-only summary file under `/root/` containing DNS records and the first mailbox password.
+## What setup asks and checks
 
-## Firewall confirmation
+It asks for the mail hostname, mailbox domain, DKIM selector, Let's Encrypt email, SSH port (detected from sshd), first mailbox and password, mailbox quota (default 5G), and how many days to keep Trash and Junk mail (`0` disables cleanup). Invalid answers are asked again.
 
-The installer configures UFW on a clean server and schedules an automatic rollback. Open a second SSH session and confirm that login works before entering `SSH-OK`. If the three-minute rollback fires first, UFW is disabled and setup continues; re-enable it with `sudo ufw enable` once SSH access is confirmed. Do not use the installer to alter an already active UFW configuration.
+Before changing anything it checks the Debian release, that port 80 is free, and that UFW is not already active. It waits for the A record instead of failing and warns if outbound port 25 is blocked. The certificate is issued before any mail configuration is written, so a certbot failure leaves a state that `setup.sh` can resume.
+
+`postmaster@` and `abuse@` become aliases of the first mailbox; DMARC reports go to `postmaster@`. A root-only summary with the DNS records and the first password is written to `/root/mailserver-setup-<domain>-<timestamp>.txt`; store the password and delete the file.
+
+## Firewall
+
+UFW allows SSH, SMTP (25, 465, 587), IMAP (143, 993) and POP3 (110, 995). Port 80 stays closed; certbot hooks open it only while a renewal runs, and leave a port 80 rule you add yourself untouched.
+
+Setup enables UFW with an automatic three-minute rollback. Open a second SSH session and confirm that login works before typing `SSH-OK`. If the rollback fires first, setup still finishes; re-enable the firewall with `sudo ufw enable` once SSH access is confirmed.
 
 ## After installation
 
-Add the printed A, MX, SPF, DKIM and DMARC records, configure the provider PTR record, wait for DNS propagation, then run:
+Add the printed A, MX, SPF, DKIM and DMARC records, set the PTR record at the VPS provider, wait for DNS propagation, then run:
 
 ```bash
-sudo bash scripts/verify-mailserver.sh mx.example.com example.com mail2026
+sudo bash scripts/verify-mailserver.sh
 ```
 
-Only a result without failures confirms that local services, DNS, PTR and TLS are ready for production validation.
+It is read-only and checks services, configuration, A, MX, SPF, DKIM, DMARC, PTR and the IMAPS certificate. Arguments (`<hostname> <domain> <selector>`) are optional. Only a result without failures means the server is ready.
+
+In a DNS control panel, paste only the TXT value: no `IN TXT`, parentheses or outer quotes.
+
+## Stack
+
+Postfix, Certbot, Redis and fail2ban come from Debian; Dovecot CE 2.4 and Rspamd from their official repositories. Setup runs `apt upgrade` first. After major package updates, run `postfix check`, `doveconf -n`, `rspamadm configtest` and `verify-mailserver.sh`.
