@@ -123,6 +123,36 @@ printf '%s\n' "$DKIM" | grep -qi 'v=DKIM1' && ok "DKIM ${DKIM_SELECTOR}" || bad 
 DMARC=$(dig +short TXT "_dmarc.${MAIL_DOMAIN}" @1.1.1.1 | tr -d '"')
 printf '%s\n' "$DMARC" | grep -qi '^v=DMARC1' && ok 'DMARC record' || bad "DMARC record for ${MAIL_DOMAIN} is missing"
 
+# TLS-RPT and MTA-STS are optional: missing ones only warn. A published MTA-STS
+# policy must list this host, though, or senders that enforce it refuse mail.
+TLSRPT=$(dig +short TXT "_smtp._tls.${MAIL_DOMAIN}" @1.1.1.1 | tr -d '"')
+if grep -qi '^v=TLSRPTv1' <<< "$TLSRPT"; then ok 'TLS-RPT record'; else warn "No TLS-RPT record _smtp._tls.${MAIL_DOMAIN} (optional; setup.sh prints it)"; fi
+STS=$(dig +short TXT "_mta-sts.${MAIL_DOMAIN}" @1.1.1.1 | tr -d '"')
+if ! grep -qi '^v=STSv1' <<< "$STS"; then
+  warn "No MTA-STS for ${MAIL_DOMAIN} (optional; setup.sh prints the records)"
+else
+  POLICY=$(curl -fsS --max-time 10 "https://mta-sts.${MAIL_DOMAIN}/.well-known/mta-sts.txt" 2>/dev/null | tr -d '\r' || true)
+  STS_MODE=$(awk -F': *' '$1 == "mode" {print $2}' <<< "$POLICY")
+  STS_MX_OK=false
+  while read -r pattern; do
+    [[ -n "$pattern" ]] || continue
+    if [[ "$pattern" == "*."* ]]; then
+      [[ "$MAIL_HOSTNAME" == *".${pattern#\*.}" && "${MAIL_HOSTNAME%%.*}.${pattern#\*.}" == "$MAIL_HOSTNAME" ]] && STS_MX_OK=true
+    else
+      [[ "${pattern,,}" == "$MAIL_HOSTNAME" ]] && STS_MX_OK=true
+    fi
+  done < <(awk -F': *' '$1 == "mx" {print $2}' <<< "$POLICY")
+  if ! grep -q '^version: STSv1' <<< "$POLICY"; then
+    bad "MTA-STS record exists, but https://mta-sts.${MAIL_DOMAIN}/.well-known/mta-sts.txt is not a valid policy"
+  elif ! $STS_MX_OK && [[ "$STS_MODE" == enforce ]]; then
+    bad "MTA-STS policy (enforce) does not list ${MAIL_HOSTNAME}: senders that enforce it refuse mail"
+  elif ! $STS_MX_OK; then
+    warn "MTA-STS policy (${STS_MODE:-no mode}) does not list ${MAIL_HOSTNAME}"
+  else
+    ok "MTA-STS policy (mode: ${STS_MODE})"
+  fi
+fi
+
 PTR=$(dig +short -x "$SERVER_IP" @1.1.1.1 | sed 's/\.$//' | tr '[:upper:]' '[:lower:]')
 [[ "$PTR" == "$MAIL_HOSTNAME" ]] && ok "PTR ${SERVER_IP} -> ${MAIL_HOSTNAME}" || bad "PTR is '${PTR:-missing}', expected ${MAIL_HOSTNAME}"
 

@@ -32,6 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/sender.sh"
 # shellcheck source=lib/pop3.sh
 . "$SCRIPT_DIR/lib/pop3.sh"
+# shellcheck source=lib/mtasts.sh
+. "$SCRIPT_DIR/lib/mtasts.sh"
 
 STATE_DIR=/etc/mailserver
 export DEBIAN_FRONTEND=noninteractive
@@ -1069,6 +1071,8 @@ print_dns_records() {
     echo -e "${CYAN}── PTR (set at the VPS provider, not in the domain DNS) ─────${NC}"
     printf "  %-40s  PTR    %s\n" "${SERVER_IP}" "${MAIL_HOSTNAME}."
     echo
+    print_mta_sts_records "$MAIL_DOMAIN" "$MAIL_HOSTNAME"
+    echo
     echo -e "${YELLOW}After DNS propagates, run: sudo bash ${SCRIPT_DIR}/verify-mailserver.sh${NC}"
 }
 
@@ -1106,6 +1110,12 @@ _dmarc.${MAIL_DOMAIN}.  TXT  "v=DMARC1; p=quarantine; rua=mailto:postmaster@${MA
 
 PTR — configure at the VPS provider
 ${SERVER_IP}  PTR  ${MAIL_HOSTNAME}.
+
+OPTIONAL — TLS-RPT and MTA-STS
+_smtp._tls.${MAIL_DOMAIN}.  TXT  "v=TLSRPTv1; rua=mailto:postmaster@${MAIL_DOMAIN}"
+_mta-sts.${MAIL_DOMAIN}.    TXT  "v=STSv1; id=$(date +%Y%m%d%H%M)"
+https://mta-sts.${MAIL_DOMAIN}/.well-known/mta-sts.txt on any HTTPS web server:
+$(mta_sts_policy "$MAIL_HOSTNAME")
 
 NEXT STEPS
 1. Add the DNS records above and configure the PTR at the VPS provider.

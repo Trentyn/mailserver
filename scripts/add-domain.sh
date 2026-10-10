@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/maps.sh
 . "$SCRIPT_DIR/lib/maps.sh"
+# shellcheck source=lib/mtasts.sh
+. "$SCRIPT_DIR/lib/mtasts.sh"
 require_root
 
 MAIL_HOSTNAME=$(postconf -h myhostname 2>/dev/null) \
@@ -140,6 +142,8 @@ echo
 echo -e "${CYAN}── DMARC ────────────────────────────────────────────────────${NC}"
 printf "  %-40s  TXT    %s\n" "_dmarc.${NEW_DOMAIN}." \
     "\"v=DMARC1; p=quarantine; rua=mailto:postmaster@${NEW_DOMAIN}\""
+echo
+print_mta_sts_records "$NEW_DOMAIN" "$MAIL_HOSTNAME"
 echo
 
 ok "Domain ${NEW_DOMAIN} added!"

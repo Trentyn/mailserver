@@ -27,7 +27,6 @@ match the planning list, so done items leave gaps.
 
 ## Security and deliverability
 
-- [ ] **14. MTA-STS and TLS-RPT.**
 - [ ] **15. Gradual DMARC tightening.** `p=none`, then `quarantine`, then
   `reject`, with a hint in `verify-mailserver.sh` when to move on.
 - [ ] **16. ARGON2ID password hashing** instead of SHA512-CRYPT.
@@ -68,6 +67,8 @@ match the planning list, so done items leave gaps.
 - [x] 8. Automatic security updates (`unattended-upgrades`, `needrestart`)
 - [x] 9. Non-interactive install: `setup.sh --config FILE` or environment variables
 - [x] 13. No plain-text passwords: generated on request, shown once, stored only as hashes
+- [x] 14. MTA-STS and TLS-RPT records printed by `setup.sh` and `add-domain.sh`,
+  checked by `verify-mailserver.sh` (the policy file is hosted elsewhere)
 - [x] 17. Optional POP3, off by default (`pop3.sh`)
 - [x] 19. `setup.sh` split into functions with a `main`
 - [x] 20. The `From:` header may show only addresses the mailbox may send as

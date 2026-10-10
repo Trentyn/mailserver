@@ -31,6 +31,8 @@ Setup prints the exact values. For every mail domain:
 | TXT | `<selector>._domainkey` | DKIM value printed by setup |
 | TXT | `_dmarc` | `v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com` |
 | PTR | VPS IP (set at the provider) | `mx.example.com.` |
+| TXT | `_smtp._tls` (optional, TLS-RPT) | `v=TLSRPTv1; rua=mailto:postmaster@example.com` |
+| TXT | `_mta-sts` (optional, MTA-STS) | `v=STSv1; id=<number>`, plus a policy file on HTTPS ([setup.md](setup.md#mta-sts-and-tls-rpt)) |
 
 Then check everything: `sudo bash scripts/verify-mailserver.sh`
 

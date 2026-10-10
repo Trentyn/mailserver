@@ -78,6 +78,14 @@ It is read-only and checks services, configuration, A, MX, SPF, DKIM, DMARC, PTR
 
 At the end, setup offers to set up encrypted daily backups to S3-compatible storage; have a bucket and an access key ready. If you skip it, set them up later with `sudo bash scripts/backup.sh setup` (see [operations.md](operations.md#backups)); `verify-mailserver.sh` warns until you do.
 
+## MTA-STS and TLS-RPT
+
+Both are optional; mail works without them. TLS-RPT is one TXT record that asks other servers to send daily reports about TLS problems with your domain. MTA-STS tells them to deliver to your domain only over verified TLS to your MX, so an attacker in the path cannot strip the encryption.
+
+MTA-STS needs a small policy file at `https://mta-sts.<domain>/.well-known/mta-sts.txt` on any HTTPS web server with a valid certificate for `mta-sts.<domain>` (Cloudflare, GitHub Pages, your own web server). This server keeps port 443 closed and does not serve it. Setup and `add-domain.sh` print the records and the file. Start with `mode: testing`, switch to `mode: enforce` once the TLS reports are clean, and change the `id` in the TXT record whenever the file changes.
+
+`verify-mailserver.sh` warns while they are missing and fails if an enforced policy does not list this server, because senders that enforce it would refuse your mail.
+
 In a DNS control panel, paste only the TXT value: no `IN TXT`, parentheses or outer quotes.
 
 ## Stack

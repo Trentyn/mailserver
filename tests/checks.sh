@@ -49,6 +49,9 @@ check "fail2ban runs the sshd, postfix-sasl and dovecot jails" \
     "fail2ban-client status | grep -q 'dovecot, postfix-sasl, sshd'"
 check "setup refuses to run on an installed server" \
     "bash scripts/setup.sh </dev/null 2>&1 | grep -q 'already installed'"
+check "setup summary lists the optional TLS-RPT and MTA-STS records" \
+    "grep -q '_smtp._tls.example.test' /root/mailserver-setup-*.txt && grep -q '_mta-sts.example.test' /root/mailserver-setup-*.txt
+     grep -q '^mode: testing' /root/mailserver-setup-*.txt && grep -q '^mx: mx.example.test' /root/mailserver-setup-*.txt"
 check "setup summary is root-only" "[[ \$(stat -c %a /root/mailserver-setup-*.txt) == 600 ]]"
 check "shell environment is sourced from root's .bashrc" "grep -q '# mailserver' /root/.bashrc"
 check "shell environment is sourced from the sudo user's .bashrc" "grep -q '# mailserver' /home/admin/.bashrc"
@@ -305,7 +308,8 @@ echo "== Maintenance scripts"
 check "add-domain rejects an invalid domain" \
     "printf 'bad domain\n' | bash scripts/add-domain.sh 2>&1 | grep -q 'Invalid domain'"
 check "add-domain example.test.au" \
-    "printf 'example.test.au\n\n\ny\n' | bash scripts/add-domain.sh && grep -q '^postmaster@example.test.au' /etc/postfix/virtual"
+    "out=\$(printf 'example.test.au\n\n\ny\n' | bash scripts/add-domain.sh) && grep -q '^postmaster@example.test.au' /etc/postfix/virtual
+     grep -q '_mta-sts.example.test.au' <<< \"\$out\" && grep -q 'https://mta-sts.example.test.au/.well-known/mta-sts.txt' <<< \"\$out\""
 check "back-to-back add-mailbox runs all succeed" \
     "for u in bob r1 r2 r3; do printf 'example.test.au\n%s\nPw12345!x\nPw12345!x\ny\n' \$u | bash scripts/add-mailbox.sh >/dev/null || exit 1; done
      doveadm mailbox list -u r3@example.test.au | grep -qx Junk"
@@ -339,6 +343,9 @@ check "verify passes every local check" \
     "out=\$(bash scripts/verify-mailserver.sh 2>&1)
      # DNS, PTR and the public certificate cannot pass for a test domain.
      ! grep '^\[FAIL\]' <<< \"\$out\" | grep -vE '\] (A |MX |SPF |DKIM record |DMARC |PTR |IMAPS TLS)'"
+check "verify treats missing MTA-STS and TLS-RPT as optional" \
+    "out=\$(bash scripts/verify-mailserver.sh 2>&1)
+     grep -q 'WARN.*No MTA-STS for example.test' <<< \"\$out\" && grep -q 'WARN.*No TLS-RPT' <<< \"\$out\""
 check "set-mailbox-quota changes the quota" \
     "bash scripts/set-mailbox-quota.sh 10G >/dev/null && doveadm quota get -u info@example.test | grep -q 10485760"
 check "cleanup-mailboxes preview runs" "bash scripts/cleanup-mailboxes.sh --days 1 >/dev/null"
