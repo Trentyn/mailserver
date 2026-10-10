@@ -17,7 +17,7 @@ cd mailserver
 sudo bash scripts/setup.sh
 ```
 
-The installer asks a few questions, waits for DNS, offers encrypted backups to S3, and can be re-run if it stops part-way. Details: [setup.md](setup.md).
+The installer asks a few questions, waits for DNS, offers encrypted backups to S3, and can be re-run if it stops part-way. For cloud-init or Ansible it runs without questions: `setup.sh --config FILE` ([setup.conf.example](setup.conf.example)). Details: [setup.md](setup.md).
 
 ## DNS records
 
@@ -43,7 +43,7 @@ Log in with the full email address.
 | IMAP | 993 | SSL/TLS |
 | SMTP | 465 | SSL/TLS |
 | SMTP | 587 | STARTTLS |
-| POP3 | 995 | SSL/TLS |
+| POP3 (if enabled) | 995 | SSL/TLS |
 
 ## Scripts
 
@@ -54,6 +54,7 @@ All scripts are in `scripts/` and run with `sudo bash scripts/<name>`.
 | Domains and mailboxes | `add-domain.sh`, `add-mailbox.sh`, `passwd-mailbox.sh`, `delete-mailbox.sh`, `delete-domain.sh` |
 | Aliases and sending rights | `alias.sh`, `send-as.sh`, `send-limit.sh` |
 | Webmail on another server | `trusted-client.sh` |
+| POP3 on or off | `pop3.sh` |
 | Backups to S3 | `backup.sh` |
 | Status and checks | `status.sh`, `verify-mailserver.sh` |
 | Quota and cleanup | `set-mailbox-quota.sh`, `cleanup-mailboxes.sh`, `install-mail-cleanup-timer.sh` |

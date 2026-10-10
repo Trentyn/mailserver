@@ -16,6 +16,9 @@
 #
 # Restoring onto a new VPS: run setup.sh there with the same mail host name,
 # then "backup.sh restore". It asks for the bucket and the backup password.
+# The answers can also come from BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET,
+# BACKUP_S3_FOLDER, BACKUP_S3_REGION, BACKUP_S3_ACCESS_KEY,
+# BACKUP_S3_SECRET_KEY and BACKUP_PASSWORD (see setup.conf.example).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,9 +28,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/maps.sh"
 # shellcheck source=lib/password.sh
 . "$SCRIPT_DIR/lib/password.sh"
+# shellcheck source=lib/pop3.sh
+. "$SCRIPT_DIR/lib/pop3.sh"
 require_root
 
-usage() { sed -n '2,19s/^# \{0,1\}//p' "$0"; }
+usage() { sed -n '2,23s/^# \{0,1\}//p' "$0"; }
 
 ENV_FILE=/etc/mailserver/backup.env
 LAST_FILE=/etc/mailserver/backup-last
@@ -85,20 +90,44 @@ read_required() {  # read_required PROMPT [DEFAULT] [silent]
     done
 }
 
+# Preset: the S3 settings come from BACKUP_* variables (setup.sh --config,
+# cloud-init, Ansible) instead of questions. Unset optional ones take their
+# defaults then, and required ones must be set.
+preset() { [[ "${MAILSERVER_NONINTERACTIVE:-0}" == 1 || -n "${BACKUP_S3_BUCKET:-}" ]]; }
+
+# answer VAR PROMPT [DEFAULT] [silent]: REPLY from the variable VAR, otherwise
+# asked, or with a preset the default.
+answer() {
+    local var="$1"
+    if [[ -n "${!var:-}" ]]; then REPLY="${!var}"; return; fi
+    if preset; then
+        [[ -n "${3:-}" ]] || die "${var} is required for backups"
+        REPLY="$3"
+        return
+    fi
+    read_required "$2" "${3:-}" "${4:-}"
+}
+
 # configure_repository MODE: ask for the bucket and keys and write ENV_FILE.
 # MODE "new" may create the repository; "existing" must find one.
 # Sets REPO_STATE to "new" or "existing".
 configure_repository() {
     local mode="$1" endpoint bucket folder region key secret rc
-    echo "S3 endpoint examples: https://s3.amazonaws.com, https://s3.eu-central-003.backblazeb2.com,"
-    echo "https://s3.eu-central-1.wasabisys.com, https://fsn1.your-objectstorage.com (Hetzner)"
-    read_required "S3 endpoint" "https://s3.amazonaws.com"; endpoint="${REPLY%/}"
+    if ! preset; then
+        echo "S3 endpoint examples: https://s3.amazonaws.com, https://s3.eu-central-003.backblazeb2.com,"
+        echo "https://s3.eu-central-1.wasabisys.com, https://fsn1.your-objectstorage.com (Hetzner)"
+    fi
+    answer BACKUP_S3_ENDPOINT "S3 endpoint" "https://s3.amazonaws.com"; endpoint="${REPLY%/}"
     [[ "$endpoint" =~ ^https?://[^/]+$ ]] || die "The endpoint must look like https://host"
-    read_required "Bucket name"; bucket="$REPLY"
-    read_required "Folder in the bucket" "mail-backup"; folder="${REPLY#/}"; folder="${folder%/}"
-    ask "Region (Enter if unsure):"; read -r region
-    read_required "Access key ID"; key="$REPLY"
-    read_required "Secret access key" "" silent; secret="$REPLY"
+    answer BACKUP_S3_BUCKET "Bucket name"; bucket="$REPLY"
+    answer BACKUP_S3_FOLDER "Folder in the bucket" "mail-backup"; folder="${REPLY#/}"; folder="${folder%/}"
+    if preset; then
+        region="${BACKUP_S3_REGION:-}"
+    else
+        ask "Region (Enter if unsure):"; read -r region
+    fi
+    answer BACKUP_S3_ACCESS_KEY "Access key ID"; key="$REPLY"
+    answer BACKUP_S3_SECRET_KEY "Secret access key" "" silent; secret="$REPLY"
 
     export RESTIC_REPOSITORY="s3:${endpoint}/${bucket}/${folder}"
     export AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$secret"
@@ -112,17 +141,18 @@ configure_repository() {
     case "$rc" in
         10)
             [[ "$mode" == new ]] || die "No backup was found at ${RESTIC_REPOSITORY}"
-            RESTIC_PASSWORD="$(generate_password)$(generate_password)"
+            RESTIC_PASSWORD="${BACKUP_PASSWORD:-$(generate_password)$(generate_password)}"
             restic init >/dev/null || die "Could not create the backup repository"
             REPO_STATE=new
             ;;
         12)
             while true; do
-                read_required "Backup password of the existing repository" "" silent
+                answer BACKUP_PASSWORD "Backup password of the existing repository" "" silent
                 RESTIC_PASSWORD="$REPLY"
                 rc=0; probe_repository || rc=$?
                 (( rc == 0 )) && break
                 (( rc == 12 )) || die "Cannot open the repository: ${PROBE_OUTPUT}"
+                [[ -z "${BACKUP_PASSWORD:-}" ]] || die "BACKUP_PASSWORD is wrong for ${RESTIC_REPOSITORY}"
                 warn "Wrong password, try again"
             done
             REPO_STATE=existing
@@ -215,17 +245,29 @@ case "$ACTION" in
         if [[ "$REPO_STATE" == existing ]]; then
             COUNT=$(restic snapshots --tag mailserver --json | grep -o '"short_id"' | wc -l)
             warn "This folder already holds ${COUNT} backups."
-            warn "To restore this server from them, answer N and run: sudo bash $0 restore"
-            ask "Add this server's backups to it? [y/N]:"
-            read -r confirm
-            [[ "${confirm,,}" == y ]] || { rm -f "$ENV_FILE"; info "Cancelled."; exit 0; }
+            if [[ "${MAILSERVER_NONINTERACTIVE:-0}" == 1 ]]; then
+                info "Adding this server's backups to it (non-interactive run)"
+            else
+                warn "To restore this server from them, answer N and run: sudo bash $0 restore"
+                ask "Add this server's backups to it? [y/N]:"
+                read -r confirm
+                [[ "${confirm,,}" == y ]] || { rm -f "$ENV_FILE"; info "Cancelled."; exit 0; }
+            fi
         else
             ok "Created an encrypted backup repository"
-            echo
-            echo -e "  ${BOLD}Backup password:${NC}  ${BOLD}${GREEN}${RESTIC_PASSWORD}${NC}"
-            warn "Without this password the backups cannot be read, and restoring onto a"
-            warn "new server needs it. Store it outside this server, in a password manager."
-            warn "It is shown only now; this server keeps a root-only copy in ${ENV_FILE}."
+            if [[ -n "${BACKUP_PASSWORD:-}" ]]; then
+                info "The backup password is the BACKUP_PASSWORD you gave"
+            elif [[ "${MAILSERVER_NONINTERACTIVE:-0}" == 1 ]]; then
+                # Never print it into cloud-init or Ansible logs.
+                warn "A backup password was generated and stored only in ${ENV_FILE} (root only)."
+                warn "Copy it to a password manager: restoring onto a new server needs it."
+            else
+                echo
+                echo -e "  ${BOLD}Backup password:${NC}  ${BOLD}${GREEN}${RESTIC_PASSWORD}${NC}"
+                warn "Without this password the backups cannot be read, and restoring onto a"
+                warn "new server needs it. Store it outside this server, in a password manager."
+                warn "It is shown only now; this server keeps a root-only copy in ${ENV_FILE}."
+            fi
         fi
         install_timer
         ok "Daily backups at about 03:30"
@@ -286,6 +328,8 @@ case "$ACTION" in
         sync_postfix_maps
         systemctl start redis-server rspamd dovecot postfix
         systemctl reload fail2ban 2>/dev/null || true
+        # The restored Dovecot config decides about POP3; open or close its ports.
+        sync_pop3_firewall
         install_timer
         ok "Restored $(cut -d: -f1 /etc/dovecot/users | grep -c .) mailboxes from backup ${SNAP}"
         info "Daily backups continue into the same storage. Check: sudo bash ${SCRIPT_DIR}/verify-mailserver.sh"

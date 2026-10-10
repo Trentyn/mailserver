@@ -62,6 +62,7 @@ echo "== Firewall and certificate renewal"
 check "UFW is active" "ufw status | grep -q '^Status: active'"
 check "UFW allows the SSH port sshd listens on (2222), found through sudo" \
     "ufw status | grep -Eq '^2222/tcp +ALLOW' && ! ufw status | grep -Eq '^22/tcp '"
+check "UFW allows POP3 because setup was asked to enable it" "ufw status | grep -Eq '^995/tcp +ALLOW'"
 check "port 80 is closed outside renewals" "! ufw status | grep -Eq '^80(/tcp)? '"
 check "renewal pre hook opens port 80" \
     "/etc/letsencrypt/renewal-hooks/pre/mailserver-open-http.sh && ufw status | grep -Eq '^80/tcp +ALLOW'"
@@ -103,6 +104,21 @@ check "authenticated submission on 465" \
     "swaks --server \$IP:465 --tlsc --auth LOGIN --auth-user info@example.test --auth-password \"\$PASSWORD\" --from info@example.test --to info@example.test --header 'Subject: smtps' | smtp_ok"
 check "sending as another address is rejected" \
     "swaks --server \$IP:587 --tls --auth LOGIN --auth-user info@example.test --auth-password \"\$PASSWORD\" --from ceo@example.test --to info@example.test | smtp_reject 553"
+# from_hdr LOGIN FROM_HEADER: submit as LOGIN with its own envelope sender and
+# the given From: header. Rspamd reloads sender_login_maps on its own within
+# seconds, so checks right after a change of rights retry for a while.
+from_hdr() {
+    swaks --server "$IP:587" --tls --auth LOGIN --auth-user "$1" --auth-password "$PASSWORD" \
+        --from "$1" --to info@example.test --header "From: $2" --header "Subject: from-header"
+}
+eventually() { for _ in {1..30}; do bash -c "$1" && return 0; sleep 1; done; return 1; }
+export -f from_hdr eventually
+check "From: header with another mailbox's address is rejected" \
+    "from_hdr info@example.test 'Boss <ceo@example.test>' | smtp_reject 554"
+check "From: header with the own address, a display name and other case is accepted" \
+    "from_hdr info@example.test '\"Info Desk\" <INFO@Example.TEST>' | smtp_ok"
+check "From: header with two addresses is rejected" \
+    "from_hdr info@example.test 'info@example.test, ceo@example.test' | smtp_reject 554"
 check "wrong password is rejected" \
     "swaks --server \$IP:587 --tls --auth LOGIN --auth-user info@example.test --auth-password wrong --from info@example.test --to info@example.test 2>&1 | grep -q 'No authentication type succeeded'"
 check "submitted mail is DKIM-signed" \
@@ -151,6 +167,14 @@ check "alias delivers to its target" \
      swaks --server 127.0.0.1 --from ext@gmail.com --to sales@example.test --header 'Subject: to-sales' | smtp_ok && wait_for_mail info@example.test INBOX to-sales"
 check "alias target may send as the alias" "send_as info@example.test sales@example.test | smtp_ok"
 check "first mailbox may send as postmaster@" "send_as info@example.test postmaster@example.test | smtp_ok"
+check "From: header may show an own alias and a +extension" \
+    "eventually \"from_hdr info@example.test sales@example.test | smtp_ok\" && from_hdr info@example.test info+news@example.test | smtp_ok"
+check "From: header follows send-as grants and revocations" \
+    "from_hdr bob@example.test ceo@example.test | smtp_reject 554
+     bash scripts/send-as.sh grant bob@example.test ceo@example.test >/dev/null
+     eventually \"from_hdr bob@example.test ceo@example.test | smtp_ok\"
+     bash scripts/send-as.sh revoke bob@example.test ceo@example.test >/dev/null
+     eventually \"from_hdr bob@example.test ceo@example.test | smtp_reject 554\""
 check "other mailboxes may not send as the alias" "send_as bob@example.test sales@example.test | smtp_reject 553"
 check "a mailbox may send from its +extension address" "send_as info@example.test info+news@example.test | smtp_ok"
 check "alias cannot shadow an existing mailbox" \
@@ -299,6 +323,14 @@ check "delete-domain example.test.au leaves example.test intact" \
      grep -q '^postmaster@example.test' /etc/postfix/virtual
      [[ -f /var/lib/rspamd/dkim/example.test.mail\$(date +%Y).key && -d /var/mail/vhosts/example.test/info ]]
      doveadm auth test info@example.test \"\$PASSWORD\" | grep -q 'auth succeeded'"
+check "pop3.sh off turns POP3 off and closes its ports (through sudo)" \
+    "runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/pop3.sh off >/dev/null
+     ! curl -sk --max-time 5 --user \"info@example.test:\$PASSWORD\" pop3s://127.0.0.1/ >/dev/null 2>&1
+     ! ufw status | grep -Eq '^(110|995)/tcp ' && curl -sk --user \"info@example.test:\$PASSWORD\" imaps://127.0.0.1/INBOX -X 'NOOP' >/dev/null"
+check "pop3.sh on turns it back on" \
+    "bash scripts/pop3.sh on >/dev/null && sleep 1
+     curl -sk --user \"info@example.test:\$PASSWORD\" pop3s://127.0.0.1/ >/dev/null && ufw status | grep -Eq '^995/tcp +ALLOW'
+     bash scripts/pop3.sh status | grep -q 'POP3 is on'"
 check "status works without a terminal" "echo 0 | env -u TERM bash scripts/status.sh >/dev/null"
 check "verify reports automatic updates and sending limits as OK" \
     "out=\$(bash scripts/verify-mailserver.sh 2>&1)

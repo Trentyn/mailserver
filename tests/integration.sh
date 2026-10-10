@@ -55,11 +55,10 @@ start_container "$NAME"
 
 # Answers to the installer prompts, in order: hostname, mail domain, DKIM
 # selector, Let's Encrypt email, SSH port (accept the detected one), first
-# user, password twice, quota, retention, confirmation, DNS prompt (the test
-# domain never resolves), SSH-OK.
-# The new server for the restore test stops there: no answer to the backup
-# question means no backups. The first server answers yes and sets them up.
-ANSWERS=$'mx.example.test\n\n\nadmin@example.test\n\n\nSecret123!\nSecret123!\n\n\ny\nskip\nSSH-OK\n'
+# user, password twice, quota, retention, POP3 (yes), confirmation, DNS prompt
+# (the test domain never resolves), SSH-OK.
+# The first server answers yes to the backup question and sets them up.
+ANSWERS=$'mx.example.test\n\n\nadmin@example.test\n\n\nSecret123!\nSecret123!\n\n\ny\ny\nskip\nSSH-OK\n'
 BACKUP_ANSWERS="y
 ${S3_ENDPOINT}
 mail-test
@@ -139,22 +138,50 @@ fail_logins
 if banned dovecot || banned postfix-sasl; then echo "FAIL  a trusted client was banned again"; status=1
 else echo "PASS  a trusted client is never banned"; fi
 
-# Disaster recovery: a new server gets setup.sh with the same answers, then
-# backup.sh restore must bring back the mailboxes, passwords, mail, DKIM key,
-# aliases and settings of the old one.
-log "Restoring the backup onto a new server"
+# Disaster recovery: a new server is installed without a terminal from a
+# config file (cloud-init, Ansible), then backup.sh restore must bring back the
+# mailboxes, passwords, mail, DKIM key, aliases and settings of the old one.
+log "Non-interactive install of a new server, then restore"
 start_container "$NEW_NAME"
-if ! docker exec -i "$NEW_NAME" bash -c 'cd /root/mailserver && bash scripts/setup.sh' <<< "$ANSWERS" > /tmp/"$NAME"-run3.log 2>&1; then
-    tail -30 /tmp/"$NAME"-run3.log; echo "FAIL  setup on the new server"; exit 1
+docker exec -i "$NEW_NAME" bash -c 'umask 077; cat > /root/setup.conf' << 'EOF'
+# Test server
+MAIL_HOSTNAME=mx.example.test     # same host name as the old server
+LETSENCRYPT_EMAIL="admin@example.test"
+DNS_WAIT=0
+EOF
+# Capture first: grep -q on a pipe would stop early and, with pipefail, fail.
+wrong_port_out=$(docker exec "$NEW_NAME" bash -c 'cd /root/mailserver && SSH_PORT=2200 bash scripts/setup.sh --config /root/setup.conf </dev/null' 2>&1 || true)
+if grep -q 'UFW would lock you out' <<< "$wrong_port_out" && docker exec "$NEW_NAME" test ! -e /etc/mailserver/setup-started; then
+    echo "PASS  non-interactive setup refuses an SSH port sshd does not listen on"
+else
+    echo "FAIL  non-interactive setup accepted a wrong SSH port"; status=1
 fi
-grep -q 'not set up yet' /tmp/"$NAME"-run3.log && docker exec "$NEW_NAME" test ! -e /etc/mailserver/backup.env \
-    || { echo "FAIL  setup without an answer to the backup question must skip backups"; exit 1; }
-echo "PASS  setup skips backups when the question gets no answer"
+if ! docker exec "$NEW_NAME" bash -c 'cd /root/mailserver && bash scripts/setup.sh --config /root/setup.conf </dev/null' > /tmp/"$NAME"-run3.log 2>&1; then
+    tail -30 /tmp/"$NAME"-run3.log; echo "FAIL  non-interactive setup"; exit 1
+fi
+echo "PASS  setup --config installs without a terminal"
+installed() {  # installed NAME COMMAND: a check on the new server before the restore
+    if docker exec "$NEW_NAME" bash -c "$2" >/dev/null 2>&1; then echo "PASS  $1"; else echo "FAIL  $1"; status=1; fi
+}
+if grep -q 'No password was given' /tmp/"$NAME"-run3.log && ! grep -q 'Password for' /tmp/"$NAME"-run3.log; then
+    echo "PASS  without FIRST_PASSWORD no password is asked for or shown"
+else
+    echo "FAIL  non-interactive setup asked for or showed a password"; status=1
+fi
 rm -f /tmp/"$NAME"-run3.log
-restore_out=$(printf '%s\nmail-test\n\n\ntestkey\ntestsecret\n%s\nRESTORE\n' "$S3_ENDPOINT" "$BACKUP_PW" \
-    | docker exec -i -u admin "$NEW_NAME" sudo -n bash /home/admin/mailserver/scripts/backup.sh restore 2>&1) \
+installed "the firewall allows sshd's port 2222" "ufw status | grep -q '^Status: active' && ufw status | grep -Eq '^2222/tcp +ALLOW'"
+installed "POP3 is off by default, its ports closed" \
+    "! grep -Eq '^protocols = .*pop3' /etc/dovecot/local.conf && ! ufw status | grep -Eq '^(110|995)/tcp '"
+installed "backups are skipped without BACKUP_S3_BUCKET" "test ! -e /etc/mailserver/backup.env"
+installed "the first mailbox exists" "doveadm user info@example.test"
+
+BACKUP_PW=$(docker exec "$NAME" bash -c '. /etc/mailserver/backup.env && echo "$RESTIC_PASSWORD"')
+restore_out=$(echo RESTORE | docker exec -i -u admin "$NEW_NAME" sudo -n \
+    BACKUP_S3_ENDPOINT="$S3_ENDPOINT" BACKUP_S3_BUCKET=mail-test BACKUP_S3_ACCESS_KEY=testkey \
+    BACKUP_S3_SECRET_KEY=testsecret BACKUP_PASSWORD="$BACKUP_PW" \
+    bash /home/admin/mailserver/scripts/backup.sh restore 2>&1) \
     || { echo "$restore_out" | tail -20; echo "FAIL  backup.sh restore"; exit 1; }
-echo "PASS  backup.sh restore runs on a new server (through sudo)"
+echo "PASS  backup.sh restore takes the storage settings from BACKUP_* (through sudo)"
 restored() {  # restored NAME COMMAND
     if docker exec "$NEW_NAME" bash -c "$2" >/dev/null 2>&1; then echo "PASS  $1"; else echo "FAIL  $1"; status=1; fi
 }
@@ -176,5 +203,8 @@ restored "a restored alias delivers" \
     "swaks --server 127.0.0.1 --from ext@gmail.com --to hand@example.test --header 'Subject: after-restore' | grep -q 'queued'
      for _ in {1..20}; do doveadm search -u info@example.test mailbox INBOX subject after-restore | grep -q . && exit 0; sleep 0.5; done; exit 1"
 restored "daily backups continue on the new server" "systemctl is-enabled --quiet mailserver-backup.timer"
+restored "POP3 follows the restored configuration, ports included" \
+    "grep -Eq '^protocols = .*pop3' /etc/dovecot/local.conf && ufw status | grep -Eq '^995/tcp +ALLOW'"
+restored "the From: header check is active" "test -f /etc/rspamd/lua.local.d/mailserver_from.lua"
 
 exit "$status"

@@ -7,8 +7,6 @@ match the planning list, so done items leave gaps.
 
 - [ ] **7. Monitoring and alerts.** Stopped services, certificate expiry,
   growing queue, low disk space, IP on blocklists; alert by email or Telegram.
-- [ ] **9. Non-interactive install.** Read answers from a config file or
-  environment variables for cloud-init and Ansible.
 
 ## User experience
 
@@ -33,11 +31,7 @@ match the planning list, so done items leave gaps.
 - [ ] **15. Gradual DMARC tightening.** `p=none`, then `quarantine`, then
   `reject`, with a hint in `verify-mailserver.sh` when to move on.
 - [ ] **16. ARGON2ID password hashing** instead of SHA512-CRYPT.
-- [ ] **17. Optional POP3** (ports 110 and 995).
 - [ ] **18. Optional IPv6** (AAAA and PTR records).
-- [ ] **20. Check the `From:` header.** Postfix only checks the envelope
-  sender, so a mailbox can send with its own envelope address and someone
-  else's `From:`, and the message is still DKIM-signed for the domain.
 - [ ] **21. Attachment protection (undecided).** ClamAV is too heavy for a
   small VPS (its signatures keep about 1–1.5 GB in RAM). Lightweight option:
   have Rspamd reject executable and script attachments (`.exe`, `.scr`, `.js`,
@@ -62,11 +56,6 @@ match the planning list, so done items leave gaps.
   and `setup.md`, and print a non-blocking warning when `setup.sh` runs on
   Debian 12. CI tests only Debian 13; Debian 12 is tested locally.
 
-## Code structure
-
-- [ ] **19. Split `setup.sh` into functions with a `main`.** Do it together with
-  9 and 17, which need steps to be called selectively.
-
 ## Done
 
 - [x] 1. fail2ban exemption for a webmail server (`trusted-client.sh`)
@@ -77,7 +66,11 @@ match the planning list, so done items leave gaps.
   offered at the end of `setup.sh`
 - [x] 6. Sending limit per mailbox (`send-limit.sh`)
 - [x] 8. Automatic security updates (`unattended-upgrades`, `needrestart`)
+- [x] 9. Non-interactive install: `setup.sh --config FILE` or environment variables
 - [x] 13. No plain-text passwords: generated on request, shown once, stored only as hashes
+- [x] 17. Optional POP3, off by default (`pop3.sh`)
+- [x] 19. `setup.sh` split into functions with a `main`
+- [x] 20. The `From:` header may show only addresses the mailbox may send as
 - [x] Port 80 open only during certificate renewal
 - [x] One language (English) and shared helpers in `scripts/lib/`
 - [x] Integration test in Docker and CI

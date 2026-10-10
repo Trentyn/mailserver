@@ -66,7 +66,7 @@ sudo bash scripts/send-as.sh revoke bob@example.com ceo@example.com
 sudo bash scripts/send-as.sh list [mailbox]
 ```
 
-Webmail identities need a matching grant. Postfix checks the envelope sender; the `From:` header is not checked yet.
+The same rights apply to the envelope sender (checked by Postfix) and to the `From:` header that recipients see (checked by Rspamd): a mailbox cannot show another person's address, even of its own domain. Webmail identities need a matching grant. After a change, Rspamd picks up the new rights within a few seconds.
 
 `/etc/postfix/sender_login_maps` and `/etc/postfix/virtual_mailboxes` are generated; do not edit them. After editing `/etc/postfix/virtual` by hand, run `sudo bash scripts/alias.sh sync`. Deleting a mailbox or domain removes it from alias target lists and prints aliases left without targets.
 
@@ -83,6 +83,16 @@ sudo bash scripts/send-limit.sh off
 ```
 
 A mailbox you did not expect in the recent hits may have a stolen password: change it with `passwd-mailbox.sh`.
+
+## POP3
+
+POP3 is off unless it was enabled during setup. IMAP keeps mail on the server and in sync on every device; only old clients need POP3.
+
+```bash
+sudo bash scripts/pop3.sh status
+sudo bash scripts/pop3.sh on     # opens ports 110 and 995
+sudo bash scripts/pop3.sh off
+```
 
 ## Webmail on another server
 

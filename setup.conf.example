@@ -1,0 +1,40 @@
+# Answers for a non-interactive installation:
+#
+#   sudo bash scripts/setup.sh --config setup.conf
+#
+# Copy this file, fill it in and keep it root-only (chmod 600): it may hold
+# passwords and S3 keys. The same names also work as environment variables,
+# which win over the file. Lines are KEY=VALUE; the file is read, not executed.
+
+# Required
+MAIL_HOSTNAME=mx.example.com
+LETSENCRYPT_EMAIL=admin@example.com
+
+# Optional; the defaults are shown
+#MAIL_DOMAIN=example.com          # default: MAIL_HOSTNAME without its first label
+#DKIM_SELECTOR=mail2026           # default: mail<year>
+#SSH_PORT=22                      # default: the port sshd listens on; must be one of them
+#FIRST_USER=info                  # first mailbox; postmaster@ and abuse@ deliver to it
+#MAILBOX_QUOTA=5G
+#MAIL_RETENTION_DAYS=30           # days to keep Trash and Junk mail; 0 keeps them forever
+#ENABLE_POP3=no
+#DNS_WAIT=900                     # seconds to wait for the A record before trying anyway
+
+# Password of the first mailbox: give one, or its hash from
+#   doveadm pw -s SHA512-CRYPT
+# With neither, the mailbox gets a random password that is never shown (so it
+# cannot end up in cloud-init or Ansible logs); set one afterwards with
+# scripts/passwd-mailbox.sh.
+#FIRST_PASSWORD=
+#FIRST_PASSWORD_HASH=
+
+# Backups to S3-compatible storage; leave BACKUP_S3_BUCKET empty to skip them.
+# Without BACKUP_PASSWORD a password is generated and kept only in
+# /etc/mailserver/backup.env; copy it to a password manager.
+#BACKUP_S3_ENDPOINT=https://s3.amazonaws.com
+#BACKUP_S3_BUCKET=
+#BACKUP_S3_FOLDER=mail-backup
+#BACKUP_S3_REGION=
+#BACKUP_S3_ACCESS_KEY=
+#BACKUP_S3_SECRET_KEY=
+#BACKUP_PASSWORD=
