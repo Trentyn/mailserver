@@ -2,16 +2,49 @@
 
 Run every script as root from the repository directory: `sudo bash scripts/<name>`.
 
+## Backups
+
+Encrypted daily backups go to any S3-compatible storage (AWS S3, Backblaze B2, Wasabi, Hetzner Object Storage, MinIO) with restic. Create a bucket and an access key limited to it, then:
+
+```bash
+sudo bash scripts/backup.sh setup     # asks endpoint, bucket, folder (mail-backup), keys
+```
+
+Setup creates the repository, shows the **backup password once**, starts a daily backup at about 03:30 and makes the first one. Store the password outside the server: restoring onto a new server is impossible without it. The server keeps a root-only copy with the S3 keys in `/etc/mailserver/backup.env`.
+
+Backed up: mail, mailboxes with their password hashes, aliases, send-as grants, DKIM keys, Postfix, Dovecot and Rspamd configuration, spam training, sending limits and trusted clients. Kept: 7 daily, 4 weekly and 12 monthly backups.
+
+```bash
+sudo bash scripts/backup.sh list                                   # backups and the last success
+sudo bash scripts/backup.sh run                                    # back up now
+sudo bash scripts/backup.sh restore-mailbox bob@example.com        # bring back deleted mail
+sudo bash scripts/backup.sh restore-mailbox bob@example.com 1a2b3c4d   # from an older backup
+sudo bash scripts/backup.sh check                                  # verify the backups are readable
+```
+
+`restore-mailbox` copies back only messages that are missing now; nothing is overwritten or duplicated.
+
+**Restoring onto a new server** after losing the old one:
+
+1. Create the new VPS and point the A record of the mail host name to it (the PTR too).
+2. `git clone` this repository and run `sudo bash scripts/setup.sh` with the **same mail host name and domain**. The first mailbox and its password do not matter; the backup replaces them.
+3. `sudo bash scripts/backup.sh restore`: it asks for the bucket, keys and backup password, then restores everything and resumes daily backups.
+4. `sudo bash scripts/verify-mailserver.sh`. If the IP address changed, update the A and PTR records.
+
+`status.sh` and `verify-mailserver.sh` warn when the last successful backup is older than 48 hours.
+
 ## Domains and mailboxes
 
 ```bash
 sudo bash scripts/add-domain.sh        # prints the DNS records for the new domain
 sudo bash scripts/add-mailbox.sh
-sudo bash scripts/passwd-mailbox.sh
+sudo bash scripts/passwd-mailbox.sh    # Enter generates a strong password
 sudo bash scripts/delete-mailbox.sh    # permanent
 sudo bash scripts/delete-domain.sh     # permanent, removes all its mailboxes
 sudo bash scripts/status.sh            # services, certificate, mailboxes, queue, fail2ban
 ```
+
+Passwords are stored only as hashes. When you press Enter at the password prompt, the server generates a 20-character password and shows it once; a password you type is never shown. Nothing writes a password to a file or log.
 
 Mailboxes are Maildir directories under `/var/mail/vhosts/<domain>/<user>/` with the standard folders `Sent`, `Drafts`, `Trash`, `Junk` and `Archive`. Do not edit them by hand. Check space with `df -h /var/mail` and `sudo du -sh /var/mail/vhosts/<domain>/*`. Change the quota for all mailboxes with `sudo bash scripts/set-mailbox-quota.sh 10G`.
 

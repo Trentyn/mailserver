@@ -253,6 +253,30 @@ check "deleting a mailbox drops its exemption" \
      ! grep -q lim2@ /etc/mailserver/send-limit-exempt"
 bash scripts/send-limit.sh set 100 500 >/dev/null
 
+echo "== Passwords"
+# A generated password is printed once, in green, after "Password for EMAIL:".
+shown_password() { sed -n 's/\x1b\[[0-9;]*m//g; s/^ *Password for [^ ]*: *//p' | tail -1; }
+export -f shown_password
+check "setup summary holds no password" "! grep -qF \"\$PASSWORD\" /root/mailserver-setup-*.txt"
+check "no mailbox password is stored in plain text" \
+    "! grep -rIlF \"\$PASSWORD\" /etc /var/log /var/lib/rspamd /root --exclude-dir=mailserver 2>/dev/null | grep ."
+check "add-mailbox generates a strong password and shows it once" \
+    "out=\$(printf 'gen\n\ny\n' | bash scripts/add-mailbox.sh 2>&1)
+     pw=\$(shown_password <<< \"\$out\")
+     [[ \${#pw} -eq 20 ]] && [[ \$(grep -cF \"\$pw\" <<< \"\$out\") -eq 1 ]]
+     printf '%s\n' \"\$pw\" | doveadm auth test gen@example.test | grep -q 'auth succeeded'
+     ! grep -rIlF \"\$pw\" /etc /var/log /root --exclude-dir=mailserver 2>/dev/null | grep ."
+check "passwd-mailbox can generate a new password" \
+    "out=\$(printf 'gen@example.test\n\n' | bash scripts/passwd-mailbox.sh 2>&1)
+     pw=\$(shown_password <<< \"\$out\")
+     [[ \${#pw} -eq 20 ]] && printf '%s\n' \"\$pw\" | doveadm auth test gen@example.test | grep -q 'auth succeeded'"
+check "a typed password is not echoed back" \
+    "out=\$(printf 'typed\nTyped12345!\nTyped12345!\ny\n' | bash scripts/add-mailbox.sh 2>&1)
+     ! grep -qF 'Typed12345!' <<< \"\$out\" && doveadm user typed@example.test >/dev/null"
+check "a password shorter than 8 characters is refused" \
+    "printf 'short\nabc\n' | bash scripts/add-mailbox.sh 2>&1 | grep -q 'at least 8 characters'
+     ! doveadm user short@example.test >/dev/null 2>&1"
+
 echo "== Maintenance scripts"
 check "add-domain rejects an invalid domain" \
     "printf 'bad domain\n' | bash scripts/add-domain.sh 2>&1 | grep -q 'Invalid domain'"
@@ -286,6 +310,35 @@ check "verify passes every local check" \
 check "set-mailbox-quota changes the quota" \
     "bash scripts/set-mailbox-quota.sh 10G >/dev/null && doveadm quota get -u info@example.test | grep -q 10485760"
 check "cleanup-mailboxes preview runs" "bash scripts/cleanup-mailboxes.sh --days 1 >/dev/null"
+
+if [[ -n "${S3_ENDPOINT:-}" ]]; then
+    echo "== Backups"
+    export S3_ENDPOINT
+    bash scripts/trusted-client.sh add 198.51.100.9 >/dev/null   # must survive a restore
+    check "backup.sh setup creates an encrypted repository and backs up (through sudo)" \
+        "out=\$(printf '%s\nmail-test\n\n\ntestkey\ntestsecret\n' \"\$S3_ENDPOINT\" \
+             | runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/backup.sh setup 2>&1)
+         grep -q 'Backup complete' <<< \"\$out\" || { echo \"\$out\" | tail -5; exit 1; }
+         systemctl is-enabled --quiet mailserver-backup.timer
+         pw=\$(sed -n 's/\x1b\[[0-9;]*m//g; s/^ *Backup password: *//p' <<< \"\$out\")
+         [[ \${#pw} -eq 40 ]] && [[ \$(grep -cF \"\$pw\" <<< \"\$out\") -eq 1 ]]"
+    check "backup settings are root-only" "[[ \$(stat -c %U:%a /etc/mailserver/backup.env) == root:600 ]]"
+    check "the daily backup service runs" \
+        "systemctl start mailserver-backup.service
+         [[ \$(systemctl show -p Result --value mailserver-backup.service) == success ]]
+         journalctl -u mailserver-backup | grep -q 'snapshot .* saved'
+         bash scripts/backup.sh list | grep -q 'mx.example.test  mailserver'"
+    check "restore-mailbox brings back deleted mail" \
+        "n=\$(doveadm search -u info@example.test mailbox INBOX all | wc -l); (( n > 0 ))
+         doveadm expunge -u info@example.test mailbox INBOX all
+         bash scripts/backup.sh restore-mailbox info@example.test | grep -q \"Restored \$n messages\"
+         [[ \$(doveadm search -u info@example.test mailbox INBOX all | wc -l) -eq \$n ]]"
+    check "restore-mailbox does not duplicate mail that still exists" \
+        "bash scripts/backup.sh restore-mailbox info@example.test | grep -q 'Restored 0 messages'"
+    check "status and verify report the backup" \
+        "echo 0 | bash scripts/status.sh | grep -q 'Last backup'
+         bash scripts/verify-mailserver.sh 2>&1 | grep -q 'OK.*Backup within the last 48 hours'"
+fi
 
 echo
 echo "Passed: ${passed}  Failed: ${failed}"

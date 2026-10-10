@@ -38,7 +38,7 @@ for svc in postfix dovecot rspamd redis-server fail2ban; do
 done
 
 # ── Updates and limits ────────────────────────────────────────────────────────
-header "Updates and sending limits"
+header "Updates, sending limits and backups"
 if [[ "$(apt-config shell v APT::Periodic::Unattended-Upgrade 2>/dev/null)" == "v='1'" ]]; then
     ok "Automatic security updates are on"
 else
@@ -51,6 +51,20 @@ if grep -q 'mailbox_hourly' /etc/rspamd/local.d/ratelimit.conf 2>/dev/null; then
     ok "Sending limit: $(send_limits | awk '{print $1 " recipients per hour, " $2 " per day"}')"
 else
     warn "No sending limit per mailbox (send-limit.sh)"
+fi
+
+if [[ -f /etc/mailserver/backup-last ]]; then
+    LAST_BACKUP=$(cat /etc/mailserver/backup-last)
+    AGE_H=$(( ($(date +%s) - $(date -d "$LAST_BACKUP" +%s 2>/dev/null || echo 0)) / 3600 ))
+    if (( AGE_H <= 48 )); then
+        ok "Last backup: ${LAST_BACKUP%+*} (${AGE_H} h ago)"
+    else
+        warn "Last backup is ${AGE_H} hours old: journalctl -u mailserver-backup"
+    fi
+elif [[ -f /etc/mailserver/backup.env ]]; then
+    warn "Backups are set up but none has finished yet"
+else
+    warn "No backups (backup.sh setup)"
 fi
 
 # ── TLS certificate ────────────────────────────────────────────────────────────

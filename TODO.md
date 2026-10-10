@@ -5,9 +5,6 @@ match the planning list, so done items leave gaps.
 
 ## Important
 
-- [ ] **5. Backups and restore.** Back up Maildirs, DKIM keys and configs
-  (restic or borg to off-site storage) and document a tested restore.
-  Without it, losing the VPS loses all mail.
 - [ ] **7. Monitoring and alerts.** Stopped services, certificate expiry,
   growing queue, low disk space, IP on blocklists; alert by email or Telegram.
 - [ ] **9. Non-interactive install.** Read answers from a config file or
@@ -32,8 +29,6 @@ match the planning list, so done items leave gaps.
 
 ## Security and deliverability
 
-- [ ] **13. No plain-text passwords.** `add-mailbox.sh` prints the password and
-  the setup summary stores it. Generate strong passwords and show them once.
 - [ ] **14. MTA-STS and TLS-RPT.**
 - [ ] **15. Gradual DMARC tightening.** `p=none`, then `quarantine`, then
   `reject`, with a hint in `verify-mailserver.sh` when to move on.
@@ -78,8 +73,10 @@ match the planning list, so done items leave gaps.
 - [x] 2. Send-as grants (`send-as.sh`)
 - [x] 3. Alias targets may send as the alias
 - [x] 4. Alias and catch-all management (`alias.sh`)
+- [x] 5. Encrypted backups to S3 with a tested restore onto a new server (`backup.sh`)
 - [x] 6. Sending limit per mailbox (`send-limit.sh`)
 - [x] 8. Automatic security updates (`unattended-upgrades`, `needrestart`)
+- [x] 13. No plain-text passwords: generated on request, shown once, stored only as hashes
 - [x] Port 80 open only during certificate renewal
 - [x] One language (English) and shared helpers in `scripts/lib/`
 - [x] Integration test in Docker and CI

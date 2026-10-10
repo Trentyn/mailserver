@@ -18,6 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/ratelimit.sh"
 # shellcheck source=lib/updates.sh
 . "$SCRIPT_DIR/lib/updates.sh"
+# shellcheck source=lib/password.sh
+. "$SCRIPT_DIR/lib/password.sh"
 require_root
 
 STATE_DIR=/etc/mailserver
@@ -84,18 +86,6 @@ read_val() {
     done
 }
 
-read_secret() {
-    local prompt="$1" val confirm
-    while true; do
-        ask "${prompt}:" >&2; read -rs val; echo
-        [[ -z "$val" ]] && warn "The password cannot be empty" >&2 && continue
-        ask "Repeat the password:" >&2; read -rs confirm; echo
-        [[ "$val" == "$confirm" ]] && break
-        warn "The passwords do not match, try again" >&2
-    done
-    REPLY="$val"
-}
-
 # ═════════════════════════════════════════════════════════════════════════════
 step "Settings"
 # ═════════════════════════════════════════════════════════════════════════════
@@ -146,8 +136,9 @@ FIRST_USER="${FIRST_USER,,}"
 FIRST_EMAIL="${FIRST_USER}@${MAIL_DOMAIN}"
 info "Mailbox to create: ${BOLD}${FIRST_EMAIL}${NC}"
 info "postmaster@${MAIL_DOMAIN} and abuse@${MAIL_DOMAIN} will deliver to it"
-read_secret "Password for ${FIRST_EMAIL}"
-FIRST_PASS="$REPLY"
+read_new_password "Password for ${FIRST_EMAIL}"
+FIRST_PASS="$NEW_PASSWORD"
+FIRST_PASS_GENERATED="$PASSWORD_GENERATED"
 
 MAILBOX_QUOTA=$(read_val "Storage quota per mailbox (for example 5G)" "5G" \
     '^[1-9][0-9]*[kmgt]$' "Enter a positive size such as 5G, 10G or 500M")
@@ -765,7 +756,7 @@ ok "fail2ban configured"
 step "First mailbox"
 # ═════════════════════════════════════════════════════════════════════════════
 
-HASH=$(doveadm pw -s SHA512-CRYPT -p "$FIRST_PASS")
+HASH=$(hash_password "$FIRST_PASS")
 echo "${FIRST_EMAIL}:${HASH}" > /etc/dovecot/users
 sync_postfix_maps
 
@@ -805,12 +796,10 @@ step "Authentication check"
 # ═════════════════════════════════════════════════════════════════════════════
 
 sleep 1
-AUTH_RESULT=$(doveadm auth test "$FIRST_EMAIL" "$FIRST_PASS" 2>&1 || true)
-if echo "$AUTH_RESULT" | grep -q "auth succeeded"; then
+if auth_ok "$FIRST_EMAIL" "$FIRST_PASS"; then
     ok "Authentication for ${FIRST_EMAIL} ✓"
 else
-    warn "Authentication failed. Check: doveadm auth test '${FIRST_EMAIL}' 'password'"
-    echo "$AUTH_RESULT" | sed 's/^/  /'
+    warn "Authentication failed. Check: doveadm auth test '${FIRST_EMAIL}'"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -929,7 +918,7 @@ echo
 echo -e "${YELLOW}After DNS propagates, run: sudo bash ${SCRIPT_DIR}/verify-mailserver.sh${NC}"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# The summary contains the first mailbox password, so only root can read it.
+# Only root can read the summary. It holds no password.
 SETUP_SUMMARY="/root/mailserver-setup-${MAIL_DOMAIN}-$(date +%Y%m%d-%H%M%S).txt"
 DKIM_DNS_VALUE=$(grep -oE '"[^"]*"' "/var/lib/rspamd/dkim/${MAIL_DOMAIN}.${DKIM_SELECTOR}.pub" | tr -d '"\n')
 umask 077
@@ -944,7 +933,6 @@ Let's Encrypt contact: ${LETSENCRYPT_EMAIL}
 
 MAILBOX CREATED
 Email: ${FIRST_EMAIL}
-Password: ${FIRST_PASS}
 IMAPS: ${MAIL_HOSTNAME}:993 (SSL/TLS)
 SMTP submission: ${MAIL_HOSTNAME}:587 (STARTTLS)
 SMTP SSL: ${MAIL_HOSTNAME}:465 (SSL/TLS)
@@ -966,7 +954,6 @@ NEXT STEPS
 1. Add the DNS records above and configure the PTR at the VPS provider.
 2. Wait for DNS propagation.
 3. Run: sudo bash ${SCRIPT_DIR}/verify-mailserver.sh ${MAIL_HOSTNAME} ${MAIL_DOMAIN} ${DKIM_SELECTOR}
-4. Store this password in a password manager, then securely delete this file.
 EOF
 chmod 600 "$SETUP_SUMMARY"
 ok "Root-only setup summary: ${SETUP_SUMMARY}"
@@ -979,11 +966,15 @@ echo
 echo -e "${GREEN}${BOLD}The mail server is ready.${NC}"
 echo
 echo "  Mailbox: ${FIRST_EMAIL}"
+if [[ "$FIRST_PASS_GENERATED" == true ]]; then
+    show_password_once "$FIRST_EMAIL" "$FIRST_PASS"
+fi
 echo "  IMAP   : ${MAIL_HOSTNAME}:993  (SSL/TLS)"
 echo "  SMTP   : ${MAIL_HOSTNAME}:587  (STARTTLS)"
 echo
 echo "  Add a domain  : sudo bash ${SCRIPT_DIR}/add-domain.sh"
 echo "  Add a mailbox : sudo bash ${SCRIPT_DIR}/add-mailbox.sh"
+echo "  Backups to S3 : sudo bash ${SCRIPT_DIR}/backup.sh setup"
 echo "  Sending limit : sudo bash ${SCRIPT_DIR}/send-limit.sh show"
 echo "  Status        : sudo bash ${SCRIPT_DIR}/status.sh"
 echo

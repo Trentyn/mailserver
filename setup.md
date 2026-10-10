@@ -22,7 +22,7 @@ It asks for the mail hostname, mailbox domain, DKIM selector, Let's Encrypt emai
 
 Before changing anything it checks the Debian release, that port 80 is free, and that UFW is not already active. It waits for the A record instead of failing and warns if outbound port 25 is blocked. The certificate is issued before any mail configuration is written, so a certbot failure leaves a state that `setup.sh` can resume.
 
-`postmaster@` and `abuse@` become aliases of the first mailbox; DMARC reports go to `postmaster@`. A root-only summary with the DNS records and the first password is written to `/root/mailserver-setup-<domain>-<timestamp>.txt`; store the password and delete the file.
+`postmaster@` and `abuse@` become aliases of the first mailbox; DMARC reports go to `postmaster@`. Press Enter at the password prompt to have a strong password generated; it is shown once at the end. A root-only summary with the DNS records (no password) is written to `/root/mailserver-setup-<domain>-<timestamp>.txt`.
 
 Setup also turns on automatic Debian security updates and limits each mailbox to 100 recipients per hour and 500 per day; see [operations.md](operations.md) to change either.
 
@@ -41,6 +41,8 @@ sudo bash scripts/verify-mailserver.sh
 ```
 
 It is read-only and checks services, configuration, A, MX, SPF, DKIM, DMARC, PTR and the IMAPS certificate. Arguments (`<hostname> <domain> <selector>`) are optional. Only a result without failures means the server is ready.
+
+Then set up backups: `sudo bash scripts/backup.sh setup` (see [operations.md](operations.md#backups)).
 
 In a DNS control panel, paste only the TXT value: no `IN TXT`, parentheses or outer quotes.
 

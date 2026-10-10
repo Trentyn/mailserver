@@ -54,6 +54,7 @@ All scripts are in `scripts/` and run with `sudo bash scripts/<name>`.
 | Domains and mailboxes | `add-domain.sh`, `add-mailbox.sh`, `passwd-mailbox.sh`, `delete-mailbox.sh`, `delete-domain.sh` |
 | Aliases and sending rights | `alias.sh`, `send-as.sh`, `send-limit.sh` |
 | Webmail on another server | `trusted-client.sh` |
+| Backups to S3 | `backup.sh` |
 | Status and checks | `status.sh`, `verify-mailserver.sh` |
 | Quota and cleanup | `set-mailbox-quota.sh`, `cleanup-mailboxes.sh`, `install-mail-cleanup-timer.sh` |
 | Older installations | `upgrade.sh`, `enable-junk-filtering.sh`, `create-setup-summary.sh` |
@@ -63,6 +64,6 @@ Usage of each script: [operations.md](operations.md).
 ## More
 
 - [setup.md](setup.md): installation, firewall, what setup checks
-- [operations.md](operations.md): daily administration, aliases, webmail, upgrades, tests
+- [operations.md](operations.md): backups and restore, daily administration, aliases, webmail, upgrades, tests
 - [known-issues.md](known-issues.md): Dovecot 2.4 and Debian 13 notes
 - [TODO.md](TODO.md): planned work

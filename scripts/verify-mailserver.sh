@@ -99,6 +99,15 @@ else
   warn 'No sending limit per mailbox (send-limit.sh set, or upgrade.sh)'
 fi
 
+if [[ ! -f /etc/mailserver/backup.env ]]; then
+  warn 'No backups are set up (backup.sh setup)'
+elif [[ -f /etc/mailserver/backup-last ]] \
+  && (( $(date +%s) - $(date -d "$(cat /etc/mailserver/backup-last)" +%s) <= 172800 )); then
+  ok "Backup within the last 48 hours ($(cat /etc/mailserver/backup-last))"
+else
+  bad 'No successful backup in the last 48 hours: journalctl -u mailserver-backup'
+fi
+
 A=$(dig +short A "$MAIL_HOSTNAME" @1.1.1.1 | tail -1)
 [[ "$A" == "$SERVER_IP" ]] && ok "A ${MAIL_HOSTNAME} -> ${SERVER_IP}" || bad "A ${MAIL_HOSTNAME} is '${A:-missing}', expected ${SERVER_IP}"
 

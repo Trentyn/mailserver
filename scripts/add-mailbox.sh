@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/maps.sh
 . "$SCRIPT_DIR/lib/maps.sh"
+# shellcheck source=lib/password.sh
+. "$SCRIPT_DIR/lib/password.sh"
 require_root
 
 # ── Current domains ────────────────────────────────────────────────────────────
@@ -53,15 +55,7 @@ if has_user "$EMAIL"; then
 fi
 
 # ── Password ────────────────────────────────────────────────────────────────────
-while true; do
-    ask "Password for ${EMAIL}:"
-    read -rs PASSWORD; echo
-    [[ -z "$PASSWORD" ]] && warn "Password cannot be empty" && continue
-    ask "Repeat password:"
-    read -rs CONFIRM; echo
-    [[ "$PASSWORD" == "$CONFIRM" ]] && break
-    warn "Passwords do not match"
-done
+read_new_password "Password for ${EMAIL}"
 
 echo
 echo "  Email : $EMAIL"
@@ -74,7 +68,7 @@ read -r confirm
 step "Creating mailbox"
 
 # Password hash
-HASH=$(doveadm pw -s SHA512-CRYPT -p "$PASSWORD")
+HASH=$(hash_password "$NEW_PASSWORD")
 
 # Dovecot users
 echo "${EMAIL}:${HASH}" >> /etc/dovecot/users
@@ -110,11 +104,10 @@ done
 ok "System mailboxes created: Sent, Drafts, Trash, Junk, Archive"
 # ── Authentication check ───────────────────────────────────────────────────
 sleep 1
-AUTH_RESULT=$(doveadm auth test "$EMAIL" "$PASSWORD" 2>&1 || true)
-if echo "$AUTH_RESULT" | grep -q "auth succeeded"; then
+if auth_ok "$EMAIL" "$NEW_PASSWORD"; then
     ok "Authentication for ${EMAIL} ✓"
 else
-    warn "Authentication failed — check: doveadm auth test '${EMAIL}' 'password'"
+    warn "Authentication failed — check: doveadm auth test '${EMAIL}'"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────────
@@ -130,6 +123,7 @@ printf "  %-10s %s\n" "IMAP:"   "${MAIL_HOSTNAME}:993  (SSL/TLS)"
 printf "  %-10s %s\n" "POP3:"   "${MAIL_HOSTNAME}:995  (SSL/TLS)"
 printf "  %-10s %s\n" "SMTP:"   "${MAIL_HOSTNAME}:587  (STARTTLS)"
 printf "  %-10s %s\n" "Login:"    "${EMAIL}"
-printf "  %-10s %s\n" "Password:" "${PASSWORD}"
-warn "Save this password: the script cannot show it again after the terminal is closed."
+if [[ "$PASSWORD_GENERATED" == true ]]; then
+    show_password_once "$EMAIL" "$NEW_PASSWORD"
+fi
 echo

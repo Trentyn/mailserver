@@ -16,11 +16,14 @@ NAME="mailserver-test-${RELEASE}-$$"
 
 log() { echo -e "\n\033[1;36m== $*\033[0m"; }
 
+S3_NAME="${NAME}-s3"
+NEW_NAME="${NAME}-restore"
+
 cleanup() {
     if [[ "${KEEP:-0}" == 1 ]]; then
-        echo "Container kept: docker exec -it ${NAME} bash"
+        echo "Containers kept: ${NAME} ${NEW_NAME} ${S3_NAME}"
     else
-        docker rm -f "$NAME" >/dev/null 2>&1 || true
+        docker rm -f "$NAME" "$NEW_NAME" "$S3_NAME" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
@@ -28,17 +31,27 @@ trap cleanup EXIT
 log "Building ${IMAGE}"
 docker build -q --build-arg "DEBIAN_RELEASE=${RELEASE}" -t "$IMAGE" "$REPO_DIR/tests" >/dev/null
 
-log "Starting ${NAME}"
-docker run -d --name "$NAME" --hostname mx --privileged --cgroupns=host \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw "$IMAGE" >/dev/null
-for _ in {1..30}; do
-    state=$(docker exec "$NAME" systemctl is-system-running 2>/dev/null || true)
-    [[ "$state" == running || "$state" == degraded ]] && break
-    sleep 1
-done
-docker cp "$REPO_DIR" "$NAME:/root/mailserver"
-docker cp "$REPO_DIR" "$NAME:/home/admin/mailserver"
-docker exec "$NAME" chown -R admin:admin /home/admin/mailserver
+# S3-compatible storage for the backup tests (SeaweedFS).
+log "Starting S3 storage"
+docker run -d --name "$S3_NAME" -v "$REPO_DIR/tests/s3.json:/etc/s3.json:ro" \
+    chrislusf/seaweedfs:3.80 server -s3 -s3.config=/etc/s3.json -dir=/data >/dev/null
+S3_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$S3_NAME")
+S3_ENDPOINT="http://${S3_IP}:8333"
+
+start_container() {  # start_container NAME: systemd container with the repository
+    log "Starting $1"
+    docker run -d --name "$1" --hostname mx --privileged --cgroupns=host \
+        -v /sys/fs/cgroup:/sys/fs/cgroup:rw "$IMAGE" >/dev/null
+    for _ in {1..30}; do
+        state=$(docker exec "$1" systemctl is-system-running 2>/dev/null || true)
+        [[ "$state" == running || "$state" == degraded ]] && break
+        sleep 1
+    done
+    docker cp "$REPO_DIR" "$1:/root/mailserver"
+    docker cp "$REPO_DIR" "$1:/home/admin/mailserver"
+    docker exec "$1" chown -R admin:admin /home/admin/mailserver
+}
+start_container "$NAME"
 
 # Answers to the installer prompts, in order: hostname, mail domain, DKIM
 # selector, Let's Encrypt email, SSH port (accept the detected one), first
@@ -82,7 +95,7 @@ rm -f /tmp/"$NAME"-run1.log /tmp/"$NAME"-run2.log
 
 log "Checks"
 status=0
-docker exec "$NAME" bash /root/mailserver/tests/checks.sh || status=1
+docker exec -e S3_ENDPOINT="$S3_ENDPOINT" "$NAME" bash /root/mailserver/tests/checks.sh || status=1
 
 # fail2ban must ban a client that keeps failing to log in, and trusted-client.sh
 # must lift and prevent that ban. The failures come from the Docker host, which
@@ -109,5 +122,41 @@ else echo "PASS  trusted-client lifts an existing ban"; fi
 fail_logins
 if banned dovecot || banned postfix-sasl; then echo "FAIL  a trusted client was banned again"; status=1
 else echo "PASS  a trusted client is never banned"; fi
+
+# Disaster recovery: a new server gets setup.sh with the same answers, then
+# backup.sh restore must bring back the mailboxes, passwords, mail, DKIM key,
+# aliases and settings of the old one.
+log "Restoring the backup onto a new server"
+start_container "$NEW_NAME"
+if ! docker exec -i "$NEW_NAME" bash -c 'cd /root/mailserver && bash scripts/setup.sh' <<< "$ANSWERS" > /tmp/"$NAME"-run3.log 2>&1; then
+    tail -30 /tmp/"$NAME"-run3.log; echo "FAIL  setup on the new server"; exit 1
+fi
+rm -f /tmp/"$NAME"-run3.log
+BACKUP_PW=$(docker exec "$NAME" bash -c '. /etc/mailserver/backup.env && echo "$RESTIC_PASSWORD"')
+restore_out=$(printf '%s\nmail-test\n\n\ntestkey\ntestsecret\n%s\nRESTORE\n' "$S3_ENDPOINT" "$BACKUP_PW" \
+    | docker exec -i -u admin "$NEW_NAME" sudo -n bash /home/admin/mailserver/scripts/backup.sh restore 2>&1) \
+    || { echo "$restore_out" | tail -20; echo "FAIL  backup.sh restore"; exit 1; }
+echo "PASS  backup.sh restore runs on a new server (through sudo)"
+restored() {  # restored NAME COMMAND
+    if docker exec "$NEW_NAME" bash -c "$2" >/dev/null 2>&1; then echo "PASS  $1"; else echo "FAIL  $1"; status=1; fi
+}
+same() {  # same NAME COMMAND: COMMAND prints the same on both servers
+    if [[ "$(docker exec "$NAME" bash -c "$2")" == "$(docker exec "$NEW_NAME" bash -c "$2")" ]]; then
+        echo "PASS  $1"; else echo "FAIL  $1"; status=1; fi
+}
+same "mailboxes and password hashes match the old server" "cat /etc/dovecot/users"
+same "DKIM key matches the old server" "sha256sum /var/lib/rspamd/dkim/*.key"
+same "aliases and send-as grants match" "cat /etc/postfix/virtual /etc/mailserver/send-as 2>/dev/null"
+same "mail in the first mailbox matches" "doveadm search -u info@example.test mailbox INBOX all | wc -l"
+same "sending limits and exemptions match" "cat /etc/mailserver/send-limit /etc/mailserver/send-limit-exempt"
+restored "a trusted webmail client is still exempt from fail2ban" \
+    "grep -qx 198.51.100.9 /etc/mailserver/trusted-clients && fail2ban-client get dovecot ignoreip | grep -q 198.51.100.9"
+restored "a restored mailbox logs in with its old password" \
+    "printf 'Secret123!\n' | doveadm auth test lim1@example.test | grep -q 'auth succeeded'"
+restored "services run after the restore" "systemctl is-active --quiet postfix dovecot rspamd redis-server fail2ban && postfix check"
+restored "a restored alias delivers" \
+    "swaks --server 127.0.0.1 --from ext@gmail.com --to hand@example.test --header 'Subject: after-restore' | grep -q 'queued'
+     for _ in {1..20}; do doveadm search -u info@example.test mailbox INBOX subject after-restore | grep -q . && exit 0; sleep 0.5; done; exit 1"
+restored "daily backups continue on the new server" "systemctl is-enabled --quiet mailserver-backup.timer"
 
 exit "$status"
