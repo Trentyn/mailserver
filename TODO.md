@@ -82,6 +82,3 @@ match the planning list, so done items leave gaps.
 - [x] One language (English) and shared helpers in `scripts/lib/`
 - [x] Integration test in Docker and CI
 - [x] ~~Roundcube~~ dropped: SnappyMail is used as webmail
-- [x] ~~Docker~~ decided against: Docker bypasses UFW and hides client IPs
-  from Postfix and fail2ban; `setup.sh` plus `backup.sh restore` already
-  moves the server to a new VPS
