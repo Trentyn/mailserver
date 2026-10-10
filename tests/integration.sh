@@ -57,7 +57,17 @@ start_container "$NAME"
 # selector, Let's Encrypt email, SSH port (accept the detected one), first
 # user, password twice, quota, retention, confirmation, DNS prompt (the test
 # domain never resolves), SSH-OK.
+# The new server for the restore test stops there: no answer to the backup
+# question means no backups. The first server answers yes and sets them up.
 ANSWERS=$'mx.example.test\n\n\nadmin@example.test\n\n\nSecret123!\nSecret123!\n\n\ny\nskip\nSSH-OK\n'
+BACKUP_ANSWERS="y
+${S3_ENDPOINT}
+mail-test
+
+
+testkey
+testsecret
+"
 
 # The first run goes as root, the resumed one as a regular user through sudo,
 # which drops SSH_CONNECTION; the installer must still find sshd's port 2222.
@@ -66,7 +76,7 @@ run_setup_as_root() {
 }
 run_setup_with_sudo() {
     docker exec -i -u admin -e SSH_CONNECTION= "$NAME" \
-        bash -c 'cd ~/mailserver && sudo bash scripts/setup.sh' <<< "$ANSWERS"
+        bash -c 'cd ~/mailserver && sudo bash scripts/setup.sh' <<< "${ANSWERS}${BACKUP_ANSWERS}"
 }
 
 log "Setup with a failing certificate request (must stop cleanly)"
@@ -91,6 +101,12 @@ fi
 grep -q 'Found an unfinished installation' /tmp/"$NAME"-run2.log \
     || { echo "FAIL: resumed run did not detect the unfinished installation"; exit 1; }
 echo "PASS  resumed setup completes"
+grep -q 'Backup complete' /tmp/"$NAME"-run2.log \
+    || { echo "FAIL: setup did not set up backups"; grep -A5 '══ Backups' /tmp/"$NAME"-run2.log; exit 1; }
+BACKUP_PW=$(sed -n 's/\x1b\[[0-9;]*m//g; s/^ *Backup password: *//p' /tmp/"$NAME"-run2.log)
+[[ ${#BACKUP_PW} -eq 40 && $(grep -cF "$BACKUP_PW" /tmp/"$NAME"-run2.log) -eq 1 ]] \
+    || { echo "FAIL: the backup password was not shown exactly once"; exit 1; }
+echo "PASS  setup sets up backups and shows their password once"
 rm -f /tmp/"$NAME"-run1.log /tmp/"$NAME"-run2.log
 
 log "Checks"
@@ -131,8 +147,10 @@ start_container "$NEW_NAME"
 if ! docker exec -i "$NEW_NAME" bash -c 'cd /root/mailserver && bash scripts/setup.sh' <<< "$ANSWERS" > /tmp/"$NAME"-run3.log 2>&1; then
     tail -30 /tmp/"$NAME"-run3.log; echo "FAIL  setup on the new server"; exit 1
 fi
+grep -q 'not set up yet' /tmp/"$NAME"-run3.log && docker exec "$NEW_NAME" test ! -e /etc/mailserver/backup.env \
+    || { echo "FAIL  setup without an answer to the backup question must skip backups"; exit 1; }
+echo "PASS  setup skips backups when the question gets no answer"
 rm -f /tmp/"$NAME"-run3.log
-BACKUP_PW=$(docker exec "$NAME" bash -c '. /etc/mailserver/backup.env && echo "$RESTIC_PASSWORD"')
 restore_out=$(printf '%s\nmail-test\n\n\ntestkey\ntestsecret\n%s\nRESTORE\n' "$S3_ENDPOINT" "$BACKUP_PW" \
     | docker exec -i -u admin "$NEW_NAME" sudo -n bash /home/admin/mailserver/scripts/backup.sh restore 2>&1) \
     || { echo "$restore_out" | tail -20; echo "FAIL  backup.sh restore"; exit 1; }

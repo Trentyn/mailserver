@@ -315,13 +315,8 @@ if [[ -n "${S3_ENDPOINT:-}" ]]; then
     echo "== Backups"
     export S3_ENDPOINT
     bash scripts/trusted-client.sh add 198.51.100.9 >/dev/null   # must survive a restore
-    check "backup.sh setup creates an encrypted repository and backs up (through sudo)" \
-        "out=\$(printf '%s\nmail-test\n\n\ntestkey\ntestsecret\n' \"\$S3_ENDPOINT\" \
-             | runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/backup.sh setup 2>&1)
-         grep -q 'Backup complete' <<< \"\$out\" || { echo \"\$out\" | tail -5; exit 1; }
-         systemctl is-enabled --quiet mailserver-backup.timer
-         pw=\$(sed -n 's/\x1b\[[0-9;]*m//g; s/^ *Backup password: *//p' <<< \"\$out\")
-         [[ \${#pw} -eq 40 ]] && [[ \$(grep -cF \"\$pw\" <<< \"\$out\") -eq 1 ]]"
+    check "backups were set up by setup.sh (through sudo)" \
+        "systemctl is-enabled --quiet mailserver-backup.timer && bash scripts/backup.sh list | grep -q 'mx.example.test  mailserver'"
     check "backup settings are root-only" "[[ \$(stat -c %U:%a /etc/mailserver/backup.env) == root:600 ]]"
     check "the daily backup service runs" \
         "systemctl start mailserver-backup.service

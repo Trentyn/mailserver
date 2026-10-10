@@ -959,6 +959,24 @@ chmod 600 "$SETUP_SUMMARY"
 ok "Root-only setup summary: ${SETUP_SUMMARY}"
 touch "$STATE_DIR/setup-complete"
 
+# Optional: the server is installed by now, so a failure here (wrong keys, no
+# bucket yet) only leaves backups for later and never breaks the install.
+step "Backups"
+echo "Encrypted daily backups to S3-compatible storage (AWS S3, Backblaze B2, Wasabi,"
+echo "Hetzner, MinIO). You need a bucket and an access key for it."
+ask "Set up backups now? [y/N]:"
+read -r SETUP_BACKUPS || SETUP_BACKUPS=""
+BACKUPS_ON=false
+if [[ "${SETUP_BACKUPS,,}" == y ]]; then
+    if bash "$SCRIPT_DIR/backup.sh" setup; then
+        BACKUPS_ON=true
+    else
+        warn "Backups were not set up. Try again later: sudo bash ${SCRIPT_DIR}/backup.sh setup"
+    fi
+else
+    info "Skipped. Set them up later: sudo bash ${SCRIPT_DIR}/backup.sh setup"
+fi
+
 step "Installation complete"
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -974,7 +992,11 @@ echo "  SMTP   : ${MAIL_HOSTNAME}:587  (STARTTLS)"
 echo
 echo "  Add a domain  : sudo bash ${SCRIPT_DIR}/add-domain.sh"
 echo "  Add a mailbox : sudo bash ${SCRIPT_DIR}/add-mailbox.sh"
-echo "  Backups to S3 : sudo bash ${SCRIPT_DIR}/backup.sh setup"
+if $BACKUPS_ON; then
+    echo "  Backups       : sudo bash ${SCRIPT_DIR}/backup.sh list"
+else
+    echo -e "  ${YELLOW}Backups to S3 : sudo bash ${SCRIPT_DIR}/backup.sh setup  (not set up yet)${NC}"
+fi
 echo "  Sending limit : sudo bash ${SCRIPT_DIR}/send-limit.sh show"
 echo "  Status        : sudo bash ${SCRIPT_DIR}/status.sh"
 echo

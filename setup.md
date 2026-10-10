@@ -42,7 +42,7 @@ sudo bash scripts/verify-mailserver.sh
 
 It is read-only and checks services, configuration, A, MX, SPF, DKIM, DMARC, PTR and the IMAPS certificate. Arguments (`<hostname> <domain> <selector>`) are optional. Only a result without failures means the server is ready.
 
-Then set up backups: `sudo bash scripts/backup.sh setup` (see [operations.md](operations.md#backups)).
+At the end, setup offers to set up encrypted daily backups to S3-compatible storage; have a bucket and an access key ready. If you skip it, set them up later with `sudo bash scripts/backup.sh setup` (see [operations.md](operations.md#backups)); `verify-mailserver.sh` warns until you do.
 
 In a DNS control panel, paste only the TXT value: no `IN TXT`, parentheses or outer quotes.
 

@@ -17,7 +17,7 @@ cd mailserver
 sudo bash scripts/setup.sh
 ```
 
-The installer asks a few questions, waits for DNS, and can be re-run if it stops part-way. Details: [setup.md](setup.md).
+The installer asks a few questions, waits for DNS, offers encrypted backups to S3, and can be re-run if it stops part-way. Details: [setup.md](setup.md).
 
 ## DNS records
 

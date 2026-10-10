@@ -73,7 +73,8 @@ match the planning list, so done items leave gaps.
 - [x] 2. Send-as grants (`send-as.sh`)
 - [x] 3. Alias targets may send as the alias
 - [x] 4. Alias and catch-all management (`alias.sh`)
-- [x] 5. Encrypted backups to S3 with a tested restore onto a new server (`backup.sh`)
+- [x] 5. Encrypted backups to S3 with a tested restore onto a new server (`backup.sh`),
+  offered at the end of `setup.sh`
 - [x] 6. Sending limit per mailbox (`send-limit.sh`)
 - [x] 8. Automatic security updates (`unattended-upgrades`, `needrestart`)
 - [x] 13. No plain-text passwords: generated on request, shown once, stored only as hashes
@@ -81,3 +82,6 @@ match the planning list, so done items leave gaps.
 - [x] One language (English) and shared helpers in `scripts/lib/`
 - [x] Integration test in Docker and CI
 - [x] ~~Roundcube~~ dropped: SnappyMail is used as webmail
+- [x] ~~Docker~~ decided against: Docker bypasses UFW and hides client IPs
+  from Postfix and fail2ban; `setup.sh` plus `backup.sh restore` already
+  moves the server to a new VPS
