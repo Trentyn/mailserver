@@ -11,6 +11,9 @@ RUN apt-get update -q \
  && apt-get clean \
  && rm -f /usr/sbin/policy-rc.d
 
+# Test tool only: 7-Zip builds an archive with encrypted file names.
+RUN apt-get update -q && apt-get install -y -q 7zip && apt-get clean
+
 # Like a typical VPS: SSH on a non-default port and an admin user with sudo,
 # so the test can run the installer through sudo the way people do.
 RUN printf 'Port 2222\n' > /etc/ssh/sshd_config.d/port.conf \

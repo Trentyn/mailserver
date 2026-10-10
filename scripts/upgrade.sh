@@ -10,6 +10,7 @@
 #   - Postfix maps for aliases, catch-all and send-as grants;
 #   - sending limits per mailbox (send-limit.sh);
 #   - the From: header check (only addresses the mailbox may send as);
+#   - rejection of dangerous attachments (attachments.sh);
 #   - automatic Debian security updates.
 set -euo pipefail
 
@@ -28,6 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/updates.sh"
 # shellcheck source=lib/sender.sh
 . "$SCRIPT_DIR/lib/sender.sh"
+# shellcheck source=lib/attachments.sh
+. "$SCRIPT_DIR/lib/attachments.sh"
 require_root
 
 [[ -f /etc/postfix/main.cf && -f /etc/dovecot/local.conf ]] \
@@ -62,14 +65,16 @@ postfix check
 systemctl reload postfix
 ok "Alias, catch-all and send-as maps are in place"
 
-step "Sending limits and the From: header"
+step "Sending limits, the From: header and attachments"
 write_rspamd_ratelimit_config
 write_submission_recipient_limit
 write_rspamd_from_check
+write_rspamd_attachment_check
 rspamadm configtest >/dev/null
 systemctl reload rspamd postfix
 ok "$(send_limits | awk '$1 == "off" {print "Sending limits are off"; exit} {print "Each mailbox may send to " $1 " recipients per hour and " $2 " per day"}')"
 ok "The From: header may show only addresses the mailbox may send as"
+ok "Dangerous attachments are rejected; Office macros: $(attachment_macros_policy) (attachments.sh)"
 
 step "Automatic updates"
 install_auto_updates

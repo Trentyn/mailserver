@@ -157,6 +157,60 @@ PY
      sleep 3
      (( \$(grep -c 'learn' /var/log/rspamd/rspamd.log) > before ))"
 
+echo "== Attachments"
+# Test files: a fake executable, a real PE header under a harmless name, zips
+# with and without a script, a macro document, a PDF, and a 7z archive whose
+# file names are encrypted.
+mkdir -p /tmp/att
+python3 - << 'PYTHON'
+import struct, zipfile
+d = '/tmp/att/'
+open(d + 'prog.bin', 'wb').write(b'MZ' + b'\0' * 4096)
+open(d + 'plain.bin', 'wb').write(b'not an executable at all\n')
+pe = b'MZ' + b'\0' * 58 + struct.pack('<I', 64) + b'PE\0\0' + struct.pack('<H', 0x14c) + b'\0' * 4096
+open(d + 'pe.bin', 'wb').write(pe)
+open(d + 'doc.pdf', 'wb').write(b'%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n')
+open(d + 'macro.bin', 'wb').write(b'PK\x03\x04' + b'\0' * 512)
+with zipfile.ZipFile(d + 'evil.zip', 'w') as z:
+    z.writestr('readme.txt', 'hi')
+    z.writestr('setup.js', 'WScript.Echo(1)')
+with zipfile.ZipFile(d + 'good.zip', 'w') as z:
+    z.writestr('report.pdf', open(d + 'doc.pdf', 'rb').read())
+PYTHON
+(cd /tmp/att && 7z a -pSecret1 -mhe=on hidden.7z doc.pdf >/dev/null)
+att() {  # att FILE NAME [LOGIN]: an inbound message, or one submitted by LOGIN, with one attachment
+    if [[ -n "${3:-}" ]]; then
+        swaks --server "$IP:587" --tls --auth LOGIN --auth-user "$3" --auth-password "$PASSWORD" \
+            --from "$3" --to info@example.test --header "Subject: att $2" --attach-name "$2" --attach "@/tmp/att/$1"
+    else
+        swaks --server 127.0.0.1 --from ext@gmail.com --to info@example.test \
+            --header "Subject: att $2" --attach-name "$2" --attach "@/tmp/att/$1"
+    fi
+}
+export -f att
+check "an .exe attachment is rejected with a clear message" \
+    "out=\$(att plain.bin invoice.exe); smtp_reject 554 <<< \"\$out\" && grep -q 'invoice.exe is not allowed:' <<< \"\$out\""
+check "a double extension (.pdf.exe) and a trailing dot are caught" \
+    "att prog.bin report.pdf.exe | smtp_reject 554 && att prog.bin 'setup.exe.' | smtp_reject 554"
+check "a script inside a zip is rejected" "att evil.zip documents.zip | smtp_reject 554"
+check "an executable renamed to .pdf is rejected by its content" "att pe.bin invoice.pdf | smtp_reject 554"
+check "a PDF and a zip of PDFs are delivered" "att doc.pdf report.pdf | smtp_ok && att good.zip reports.zip | smtp_ok"
+check "outbound mail is checked too" "att prog.bin tool.exe info@example.test | smtp_reject 554"
+check "Office files with macros are rejected by default" \
+    "out=\$(att macro.bin budget.xlsm); smtp_reject 554 <<< \"\$out\" && grep -q 'macros' <<< \"\$out\""
+check "attachments.sh macros junk delivers them with a Junk score (through sudo)" \
+    "runuser -u admin -- sudo -n bash /home/admin/mailserver/scripts/attachments.sh macros junk >/dev/null && sleep 3
+     att macro.bin plan.docm | smtp_ok && sleep 1
+     grep -F 'plan.docm' /var/log/rspamd/rspamd.log | grep -q MAILSERVER_MACRO_ATTACHMENT"
+check "attachments.sh macros allow delivers them normally" \
+    "bash scripts/attachments.sh macros allow >/dev/null && sleep 3 && att macro.bin slides.pptm | smtp_ok
+     bash scripts/attachments.sh macros reject >/dev/null && sleep 3 && att macro.bin slides.pptm | smtp_reject 554"
+check "an encrypted archive with hidden file names gets a Junk score" \
+    "att hidden.7z files.7z | smtp_ok && sleep 1 && grep -F files.7z /var/log/rspamd/rspamd.log | grep -q MAILSERVER_HIDDEN_ARCHIVE"
+check "attachments.sh show lists recent rejections once each" \
+    "att plain.bin latest.exe | smtp_reject 554
+     [[ \$(bash scripts/attachments.sh show | grep -c 'latest.exe') -eq 1 ]]"
+
 echo "== Aliases and sending identities"
 send_as() {  # send_as LOGIN FROM: submit a message on 587 as LOGIN with envelope FROM
     swaks --server "$IP:587" --tls --auth LOGIN --auth-user "$1" --auth-password "$PASSWORD" \

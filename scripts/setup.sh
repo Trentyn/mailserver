@@ -34,6 +34,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/pop3.sh"
 # shellcheck source=lib/mtasts.sh
 . "$SCRIPT_DIR/lib/mtasts.sh"
+# shellcheck source=lib/attachments.sh
+. "$SCRIPT_DIR/lib/attachments.sh"
 
 STATE_DIR=/etc/mailserver
 export DEBIAN_FRONTEND=noninteractive
@@ -829,6 +831,8 @@ configure_rspamd() {
     write_submission_recipient_limit
     # The From: header may show only addresses the mailbox may send as.
     write_rspamd_from_check
+    # Executables, scripts and (by default) Office macros are rejected.
+    write_rspamd_attachment_check
 
     cat > /etc/rspamd/local.d/worker-proxy.inc << 'EOF'
 milter = yes;

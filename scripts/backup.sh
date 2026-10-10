@@ -30,6 +30,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/password.sh"
 # shellcheck source=lib/pop3.sh
 . "$SCRIPT_DIR/lib/pop3.sh"
+# shellcheck source=lib/sender.sh
+. "$SCRIPT_DIR/lib/sender.sh"
+# shellcheck source=lib/attachments.sh
+. "$SCRIPT_DIR/lib/attachments.sh"
 require_root
 
 usage() { sed -n '2,23s/^# \{0,1\}//p' "$0"; }
@@ -326,6 +330,9 @@ case "$ACTION" in
         [[ -f /var/lib/redis/dump.rdb ]] && chown redis:redis /var/lib/redis/dump.rdb
         postmap /etc/postfix/vmailbox
         sync_postfix_maps
+        # Rules generated from restored settings (the attachment policy).
+        write_rspamd_from_check
+        write_rspamd_attachment_check
         systemctl start redis-server rspamd dovecot postfix
         systemctl reload fail2ban 2>/dev/null || true
         # The restored Dovecot config decides about POP3; open or close its ports.

@@ -70,6 +70,21 @@ The same rights apply to the envelope sender (checked by Postfix) and to the `Fr
 
 `/etc/postfix/sender_login_maps` and `/etc/postfix/virtual_mailboxes` are generated; do not edit them. After editing `/etc/postfix/virtual` by hand, run `sudo bash scripts/alias.sh sync`. Deleting a mailbox or domain removes it from alias target lists and prints aliases left without targets.
 
+## Dangerous attachments
+
+Mail with dangerous attachments is rejected when it arrives, inbound and outbound alike; the sender gets an error that names the file and suggests sharing it as a link. This is a type filter, not a virus scanner, and costs almost no memory.
+
+- **Always rejected:** executables, scripts, installers, shortcuts and disk images (`.exe`, `.scr`, `.js`, `.vbs`, `.ps1`, `.bat`, `.msi`, `.jar`, `.lnk`, `.iso`, `.vhd` and more). The list follows the default attachment filter of Microsoft 365. Files inside zip, rar and 7z archives are checked too, the last extension counts (`invoice.pdf.exe` is an `.exe`), and an executable renamed to `.pdf` is recognised by its content.
+- **Office files with macros** (`.docm`, `.xlsm`, `.pptm`, ...) are rejected by default, as in Microsoft 365 and the CIS and Essential Eight baselines. If your organisation exchanges them, deliver them to Junk or normally instead.
+- **Encrypted archives that hide their file names** cannot be checked and go to Junk.
+
+```bash
+sudo bash scripts/attachments.sh show            # policy and recent rejections
+sudo bash scripts/attachments.sh macros junk     # or: reject (default), allow
+```
+
+For real virus scanning, ClamAV can be added to Rspamd on servers with 4 GB of RAM or more; its signatures need about 1–1.5 GB.
+
 ## Sending limits
 
 Each mailbox may send to 100 recipients per hour and 500 per day, so a stolen password cannot be used to send spam and get the server's IP address blocklisted. A message to five people counts as five, and one message may not have more recipients than the hourly limit. Over the limit the server answers with a temporary error ("Sending limit of 100 recipients per hour reached, try again later") and the mail client reports that it could not send. Inbound mail is never limited.
@@ -147,7 +162,7 @@ After `git pull` on a server installed by an earlier version:
 sudo bash scripts/upgrade.sh
 ```
 
-It is idempotent and backs up what it changes. It closes port 80 outside certificate renewals, installs the fail2ban filter for Dovecot 2.4 (earlier versions never banned IMAP/POP3 password guessing), adds Dovecot log rotation, creates the maps used by `alias.sh` and `send-as.sh`, sets the default sending limits and turns on automatic security updates.
+It is idempotent and backs up what it changes. It closes port 80 outside certificate renewals, installs the fail2ban filter for Dovecot 2.4 (earlier versions never banned IMAP/POP3 password guessing), adds Dovecot log rotation, creates the maps used by `alias.sh` and `send-as.sh`, sets the default sending limits, checks the `From:` header, rejects dangerous attachments and turns on automatic security updates.
 
 A server installed before Junk support also needs `sudo bash scripts/enable-junk-filtering.sh 30`. `create-setup-summary.sh` recreates the root-only setup summary.
 

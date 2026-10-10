@@ -31,12 +31,6 @@ match the planning list, so done items leave gaps.
   `reject`, with a hint in `verify-mailserver.sh` when to move on.
 - [ ] **16. ARGON2ID password hashing** instead of SHA512-CRYPT.
 - [ ] **18. Optional IPv6** (AAAA and PTR records).
-- [ ] **21. Attachment protection (undecided).** ClamAV is too heavy for a
-  small VPS (its signatures keep about 1–1.5 GB in RAM). Lightweight option:
-  have Rspamd reject executable and script attachments (`.exe`, `.scr`, `.js`,
-  `.vbs`, `.bat`, `.cmd`, `.ps1`, `.lnk`, `.iso`, macro-enabled Office files),
-  also inside archives and with double extensions. Document ClamAV as an option
-  for servers with 4 GB of RAM or more.
 
 ## Webmail on another server
 
@@ -71,6 +65,8 @@ match the planning list, so done items leave gaps.
   checked by `verify-mailserver.sh` (the policy file is hosted elsewhere)
 - [x] 17. Optional POP3, off by default (`pop3.sh`)
 - [x] 19. `setup.sh` split into functions with a `main`
+- [x] 21. Dangerous attachments rejected by type (Microsoft 365 list, archives,
+  renamed executables); Office macros rejected by default (`attachments.sh`)
 - [x] 20. The `From:` header may show only addresses the mailbox may send as
 - [x] Port 80 open only during certificate renewal
 - [x] One language (English) and shared helpers in `scripts/lib/`

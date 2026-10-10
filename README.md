@@ -1,6 +1,6 @@
 # Mail Server
 
-Self-hosted mail server for a clean Debian 12 or 13 VPS, installed by one interactive script: Postfix, Dovecot CE 2.4, Rspamd with DKIM, Junk training and per-mailbox sending limits, Let's Encrypt, fail2ban, UFW and automatic security updates.
+Self-hosted mail server for a clean Debian 12 or 13 VPS, installed by one interactive script: Postfix, Dovecot CE 2.4, Rspamd with DKIM, Junk training, dangerous-attachment blocking and per-mailbox sending limits, Let's Encrypt, fail2ban, UFW and automatic security updates.
 
 ## Requirements
 
@@ -57,6 +57,7 @@ All scripts are in `scripts/` and run with `sudo bash scripts/<name>`.
 | Aliases and sending rights | `alias.sh`, `send-as.sh`, `send-limit.sh` |
 | Webmail on another server | `trusted-client.sh` |
 | POP3 on or off | `pop3.sh` |
+| Dangerous attachments | `attachments.sh` |
 | Backups to S3 | `backup.sh` |
 | Status and checks | `status.sh`, `verify-mailserver.sh` |
 | Quota and cleanup | `set-mailbox-quota.sh`, `cleanup-mailboxes.sh`, `install-mail-cleanup-timer.sh` |
